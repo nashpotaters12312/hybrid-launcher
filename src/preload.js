@@ -18,5 +18,12 @@ contextBridge.exposeInMainWorld('launcher', {
   artStatus: () => ipcRenderer.invoke('art:status'),
   windowControl: (action) => ipcRenderer.invoke('window:control', action),
   pathForFile: (file) => webUtils.getPathForFile(file),
-  onChanged: (cb) => ipcRenderer.on('library:changed', cb),
+  appInfo: () => ipcRenderer.invoke('app:info'),
+  openDataFolder: () => ipcRenderer.invoke('data:openFolder'),
+  exportData: () => ipcRenderer.invoke('data:export'),
+  importData: () => ipcRenderer.invoke('data:import'),
+  onChanged: (cb) => ipcRenderer.on('library:changed', () => cb()),
+  onArtProgress: (cb) => ipcRenderer.on('art:progress', (_e, n) => cb(n)),
+  onAutoScan: (cb) => ipcRenderer.on('scan:auto', (_e, names) => cb(names)),
+  onMaximized: (cb) => ipcRenderer.on('window:maximized', (_e, v) => cb(v)),
 });

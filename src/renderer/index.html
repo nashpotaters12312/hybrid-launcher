@@ -59,7 +59,7 @@
       </div>
     </main>
 
-    <aside id="detail" class="detail hidden"></aside>
+    <aside id="detail" class="detail"></aside>
   </div>
 
   <dialog id="dlg-add">
@@ -98,20 +98,56 @@
     </form>
   </dialog>
 
-  <dialog id="dlg-settings">
+  <dialog id="dlg-settings" class="settings">
     <form method="dialog" id="form-settings">
-      <h2>Settings</h2>
-      <label class="toggle check"><input type="checkbox" id="opt-minimize" /> Minimize the launcher when a game starts</label>
+      <div class="settings-head">
+        <h2>Settings</h2>
+        <span class="muted small" id="app-version"></span>
+      </div>
 
-      <h3>Cover art</h3>
-      <p class="muted small">Covers are found automatically using Steam's store, which covers most PC games.
-        For games that aren't on Steam, add a free SteamGridDB API key
-        (sign in at steamgriddb.com, then Preferences &rarr; API).</p>
-      <label>SteamGridDB API key (optional)
-        <input id="opt-sgdb" type="password" placeholder="Paste your key" autocomplete="off" spellcheck="false" />
-      </label>
-      <div class="row">
-        <button type="button" class="btn" id="btn-find-missing">Find missing covers now</button>
+      <div class="settings-body">
+        <section>
+          <h3>General</h3>
+          <label class="switch" id="row-autostart"><span><b>Start with Windows</b><small>Open the launcher when you sign in.</small></span><input type="checkbox" data-setting="startWithWindows" /></label>
+          <label class="switch" id="row-startmin"><span><b>Start minimized</b><small>When starting with Windows, open in the taskbar.</small></span><input type="checkbox" data-setting="startMinimized" /></label>
+          <label class="switch"><span><b>Minimize when a game starts</b><small>Get the launcher out of the way while you play.</small></span><input type="checkbox" data-setting="minimizeOnLaunch" /></label>
+          <label class="switch"><span><b>Check for new games on startup</b><small>Automatically add newly installed Steam and Epic games.</small></span><input type="checkbox" data-setting="autoScan" /></label>
+        </section>
+
+        <section>
+          <h3>Appearance</h3>
+          <div class="setting-row">
+            <span><b>Accent color</b></span>
+            <div class="swatches" id="swatches"></div>
+          </div>
+          <div class="setting-row">
+            <span><b>Cover size</b></span>
+            <input type="range" min="120" max="240" step="10" id="opt-cardsize" data-setting="cardSize" />
+          </div>
+          <label class="switch"><span><b>Show &ldquo;Continue playing&rdquo;</b><small>Your recent games at the top of the library.</small></span><input type="checkbox" data-setting="showContinue" data-default="true" /></label>
+          <label class="switch"><span><b>Animations</b><small>Turn off for a snappier, motion-free interface.</small></span><input type="checkbox" data-setting="animations" data-default="true" /></label>
+        </section>
+
+        <section>
+          <h3>Cover art</h3>
+          <p class="muted small">Covers are found automatically using Steam's store, which covers most PC games.
+            For games that aren't on Steam, add a free SteamGridDB API key
+            (sign in at steamgriddb.com, then Preferences &rarr; API).</p>
+          <label class="field">SteamGridDB API key (optional)
+            <input id="opt-sgdb" type="password" placeholder="Paste your key" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="row"><button type="button" class="btn" id="btn-find-missing">Find missing covers now</button></div>
+        </section>
+
+        <section>
+          <h3>Your data</h3>
+          <p class="muted small">Back up your library (games, play time, favorites) or move it to another PC.</p>
+          <div class="row wrap">
+            <button type="button" class="btn" id="btn-export">Back up library…</button>
+            <button type="button" class="btn" id="btn-import">Restore from backup…</button>
+            <button type="button" class="btn" id="btn-datafolder">Open data folder</button>
+          </div>
+        </section>
       </div>
 
       <div class="dlg-actions">

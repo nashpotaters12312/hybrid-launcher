@@ -62,12 +62,52 @@ function toast(msg, isError = false) {
 const SOURCE_LABEL = { steam: 'Steam', epic: 'Epic', custom: 'PC' };
 
 // ---------- Data ----------
+// Coalesce bursts of refresh requests (e.g. many covers arriving) into one.
+let refreshing = null;
+let refreshAgain = false;
 async function refresh() {
-  const { games, settings } = await api.getLibrary();
-  state.games = games;
-  state.settings = settings;
-  $('#opt-minimize').checked = !!settings.minimizeOnLaunch;
-  render();
+  if (refreshing) {
+    refreshAgain = true;
+    return refreshing;
+  }
+  refreshing = (async () => {
+    do {
+      refreshAgain = false;
+      const { games, settings } = await api.getLibrary();
+      state.games = games;
+      state.settings = settings;
+      applyAppearance();
+      render();
+    } while (refreshAgain);
+  })();
+  try {
+    await refreshing;
+  } finally {
+    refreshing = null;
+  }
+}
+
+// ---------- Appearance ----------
+const ACCENTS = ['#7c5cff', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#06b6d4'];
+
+function lighten(hex, amt = 0.25) {
+  const n = parseInt(hex.slice(1), 16);
+  const c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => Math.round(v + (255 - v) * amt));
+  return '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+function setting(key, fallback) {
+  const v = state.settings[key];
+  return v === undefined ? fallback : v;
+}
+
+function applyAppearance() {
+  const root = document.documentElement.style;
+  const accent = setting('accent', ACCENTS[0]);
+  root.setProperty('--accent', accent);
+  root.setProperty('--accent-2', lighten(accent));
+  root.setProperty('--card-min', `${setting('cardSize', 160)}px`);
+  document.body.classList.toggle('no-anim', !setting('animations', true));
 }
 
 function visibleGames() {
@@ -92,14 +132,48 @@ function visibleGames() {
 }
 
 // ---------- Rendering ----------
+const loadedImages = new Set();
+const cardCache = new Map(); // id -> { sig, node }
+
+// Everything that changes how a card looks. If it's unchanged, the existing
+// DOM node (and its already-decoded image) is reused — no flicker.
+function cardSig(g) {
+  return [g.name, g.cover, g.icon, g.source, g.running, g.favorite, formatAgo(g.lastPlayed)].join('|');
+}
+
+function cardFor(g) {
+  const sig = cardSig(g);
+  const hit = cardCache.get(g.id);
+  if (hit && hit.sig === sig) return hit.node;
+  const node = gameCard(g);
+  cardCache.set(g.id, { sig, node });
+  return node;
+}
+
+// Reorder/insert/remove only what changed instead of rebuilding the grid.
+function reconcile(container, nodes) {
+  let i = 0;
+  for (const node of nodes) {
+    const at = container.children[i];
+    if (at !== node) container.insertBefore(node, at || null);
+    i++;
+  }
+  while (container.children.length > nodes.length) container.lastElementChild.remove();
+}
 function coverNode(g) {
   const box = el('div', { class: 'cover' });
+  box.style.background = gradientFor(g.name);
   const fallback = () => {
     box.style.background = gradientFor(g.name);
     box.append(el('div', { class: 'fallback' }, g.icon ? el('img', { src: g.icon, alt: '' }) : null, g.name));
   };
   if (g.cover) {
-    const img = el('img', { class: 'art', src: g.cover, alt: '', loading: 'lazy' });
+    const img = el('img', { class: 'art', src: g.cover, alt: '', loading: 'lazy', decoding: 'async' });
+    if (loadedImages.has(g.cover)) img.classList.add('loaded'); // no fade for images already seen
+    img.addEventListener('load', () => {
+      loadedImages.add(g.cover);
+      img.classList.add('loaded');
+    });
     img.addEventListener('error', () => {
       img.remove();
       fallback();
@@ -118,7 +192,7 @@ function coverNode(g) {
 
 function gameCard(g) {
   const card = el('div', {
-    class: 'card' + (g.id === state.selectedId ? ' selected' : ''),
+    class: 'card',
     tabindex: 0,
     title: g.name,
   });
@@ -132,6 +206,7 @@ function gameCard(g) {
     el('div', { class: 'card-name' }, g.name),
     el('div', { class: 'card-meta' }, g.lastPlayed ? `Played ${formatAgo(g.lastPlayed)}` : 'Not played yet')
   );
+  card.dataset.id = g.id;
   card.addEventListener('click', () => select(g.id));
   card.addEventListener('dblclick', () => launch(g.id));
   card.addEventListener('keydown', (e) => {
@@ -156,15 +231,19 @@ function renderCounts() {
   }
 }
 
+let continueSig = '';
 function renderContinue() {
   const sec = $('#continue');
   const recent = state.games
     .filter((g) => g.lastPlayed && !g.hidden)
     .sort((a, b) => b.lastPlayed - a.lastPlayed)
     .slice(0, 4);
-  const show = state.filter === 'all' && !state.query && recent.length > 0;
+  const show = setting('showContinue', true) && state.filter === 'all' && !state.query && recent.length > 0;
   sec.classList.toggle('hidden', !show);
   if (!show) return;
+  const sig = recent.map((g) => [g.id, g.name, g.cover, g.steamAppId, formatAgo(g.lastPlayed), Math.round(g.playtimeMinutes || 0)].join(',')).join('|');
+  if (sig === continueSig) return;
+  continueSig = sig;
   sec.replaceChildren(
     el('h3', {}, 'Continue playing'),
     el('div', { class: 'continue-row' }, recent.map((g) => {
@@ -186,27 +265,44 @@ function renderContinue() {
   );
 }
 
-function render() {
+const noMatch = el('p', { class: 'muted no-match' }, 'No games match.');
+
+function render({ animate = false } = {}) {
   renderCounts();
   renderContinue();
   const list = visibleGames();
-  $('#grid').replaceChildren(...list.map(gameCard));
+  const grid = $('#grid');
+  const nodes = list.map(cardFor);
   const libraryEmpty = state.games.length === 0;
-  $('#empty').classList.toggle('hidden', !libraryEmpty);
-  if (!libraryEmpty && list.length === 0) {
-    $('#grid').append(el('p', { class: 'muted' }, 'No games match.'));
+  if (!libraryEmpty && list.length === 0) nodes.push(noMatch);
+  reconcile(grid, nodes);
+  for (const node of nodes) node.classList.toggle('selected', node.dataset.id === state.selectedId);
+  // Drop cached cards for games that were removed.
+  const ids = new Set(state.games.map((g) => g.id));
+  for (const id of cardCache.keys()) if (!ids.has(id)) cardCache.delete(id);
+
+  if (animate) {
+    grid.classList.remove('swap');
+    void grid.offsetWidth; // restart the animation
+    grid.classList.add('swap');
   }
+  $('#empty').classList.toggle('hidden', !libraryEmpty);
   renderDetail();
 }
 
+let detailSig = '';
 function renderDetail() {
   const panel = $('#detail');
   const g = state.games.find((x) => x.id === state.selectedId);
+  panel.classList.toggle('open', !!g);
+  $('.app').classList.toggle('panel-open', !!g);
   if (!g) {
-    panel.classList.add('hidden');
+    detailSig = '';
     return;
   }
-  panel.classList.remove('hidden');
+  const sig = JSON.stringify([g, formatAgo(g.lastPlayed)]);
+  if (sig === detailSig) return;
+  detailSig = sig;
 
   const art = el('div', { class: 'detail-art' });
   art.style.background = g.cover
@@ -254,35 +350,39 @@ function reportBrokenArt(id) {
 async function findArt(g) {
   toast(`Looking for cover art for ${g.name}…`);
   const before = g.cover;
-  await api.findArt(g.id);
-  watchArt(() => {
+  whenArtDone(() => {
     const now = state.games.find((x) => x.id === g.id);
     if (now && now.cover && now.cover !== before) toast(`Found cover art for ${g.name}`);
     else toast(`No cover art found for ${g.name}. You can pick one with Edit.`);
   });
+  await api.findArt(g.id);
 }
 
-// Show progress in the sidebar while the background lookup runs.
-let artTimer;
-function watchArt(onDone) {
-  clearInterval(artTimer);
-  const status = $('#art-status');
-  artTimer = setInterval(async () => {
-    const { pending } = await api.artStatus();
-    status.classList.toggle('hidden', pending === 0);
-    status.textContent = `Finding cover art… (${pending} left)`;
-    if (pending === 0) {
-      clearInterval(artTimer);
-      await refresh();
-      onDone && onDone();
-    }
-  }, 700);
+// The main process pushes how many lookups are left.
+let artDoneCallbacks = [];
+function whenArtDone(cb) {
+  artDoneCallbacks.push(cb);
 }
+api.onArtProgress(async (pending) => {
+  const status = $('#art-status');
+  status.classList.toggle('hidden', pending === 0);
+  status.textContent = `Finding cover art… (${pending} left)`;
+  if (pending === 0 && artDoneCallbacks.length) {
+    await refresh();
+    const cbs = artDoneCallbacks;
+    artDoneCallbacks = [];
+    cbs.forEach((cb) => cb());
+  }
+});
 
 // ---------- Actions ----------
 function select(id) {
   state.selectedId = state.selectedId === id ? null : id;
   render();
+}
+
+function savePrefs() {
+  api.setSettings({ lastFilter: state.filter, sort: state.sort });
 }
 
 async function launch(id) {
@@ -363,7 +463,6 @@ addForm.addEventListener('submit', async (e) => {
   }
   $('#dlg-add').close();
   await refresh();
-  watchArt();
 });
 
 // ---------- Scan dialog ----------
@@ -402,7 +501,6 @@ $('#form-scan').addEventListener('submit', async (e) => {
   }
   $('#dlg-scan').close();
   await refresh();
-  watchArt();
   toast(`Added ${picked.length} game${picked.length === 1 ? '' : 's'}`);
 });
 
@@ -410,35 +508,118 @@ $('#form-scan').addEventListener('submit', async (e) => {
 document.querySelectorAll('.nav-item[data-filter]').forEach((b) =>
   b.addEventListener('click', () => {
     document.querySelectorAll('.nav-item[data-filter]').forEach((x) => x.classList.toggle('active', x === b));
+    if (state.filter === b.dataset.filter) return;
     state.filter = b.dataset.filter;
-    render();
+    render({ animate: true });
+    savePrefs();
   })
 );
 
-$('#search').addEventListener('input', (e) => { state.query = e.target.value; render(); });
-$('#sort').addEventListener('change', (e) => { state.sort = e.target.value; render(); });
+let searchTimer;
+$('#search').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.query = e.target.value;
+    render();
+  }, 60);
+});
+$('#sort').addEventListener('change', (e) => {
+  state.sort = e.target.value;
+  render({ animate: true });
+  savePrefs();
+});
 $('#btn-add').addEventListener('click', () => openEditor());
 $('#btn-scan').addEventListener('click', runScan);
 $('#empty [data-action="add"]').addEventListener('click', () => openEditor());
 $('#empty [data-action="scan"]').addEventListener('click', runScan);
-$('#opt-minimize').addEventListener('change', (e) => api.setSettings({ minimizeOnLaunch: e.target.checked }));
-$('#btn-settings').addEventListener('click', () => {
+// ---------- Settings ----------
+const settingInputs = document.querySelectorAll('#dlg-settings [data-setting]');
+
+function fillSettings() {
+  for (const input of settingInputs) {
+    const key = input.dataset.setting;
+    const def = input.dataset.default === 'true';
+    if (input.type === 'checkbox') input.checked = !!setting(key, def);
+    else input.value = setting(key, input.id === 'opt-cardsize' ? 160 : '');
+  }
   $('#opt-sgdb').value = state.settings.sgdbKey || '';
+  $('#swatches').replaceChildren(...ACCENTS.map((c) =>
+    el('button', {
+      type: 'button',
+      class: 'swatch' + (c === setting('accent', ACCENTS[0]) ? ' active' : ''),
+      style: `background:${c}`,
+      title: c,
+      onclick: () => changeSetting({ accent: c }).then(fillSettings),
+    })
+  ));
+  $('#row-startmin').classList.toggle('disabled', !setting('startWithWindows', false));
+}
+
+async function changeSetting(patch) {
+  Object.assign(state.settings, patch); // apply instantly, save in background
+  applyAppearance();
+  continueSig = '';
+  render();
+  state.settings = await api.setSettings(patch);
+}
+
+for (const input of settingInputs) {
+  const key = input.dataset.setting;
+  if (input.type === 'checkbox') {
+    input.addEventListener('change', () => {
+      changeSetting({ [key]: input.checked });
+      if (key === 'startWithWindows') $('#row-startmin').classList.toggle('disabled', !input.checked);
+    });
+  } else {
+    // Live preview while dragging the slider.
+    input.addEventListener('input', () => {
+      document.documentElement.style.setProperty('--card-min', `${input.value}px`);
+    });
+    input.addEventListener('change', () => changeSetting({ [key]: Number(input.value) }));
+  }
+}
+
+$('#btn-settings').addEventListener('click', async () => {
+  const info = await api.appInfo();
+  $('#app-version').textContent = `Version ${info.version}`;
+  $('#row-autostart').classList.toggle('disabled', !info.canAutoStart);
+  fillSettings();
+  if (!info.canAutoStart) $('#row-startmin').classList.add('disabled');
   $('#dlg-settings').showModal();
 });
-$('#opt-sgdb').addEventListener('change', async (e) => {
-  state.settings = await api.setSettings({ sgdbKey: e.target.value.trim() });
-});
+$('#opt-sgdb').addEventListener('change', (e) => changeSetting({ sgdbKey: e.target.value.trim() }));
 $('#btn-find-missing').addEventListener('click', async () => {
-  const n = await api.findMissingArt();
-  if (!n) return toast('Every game already has a cover.');
-  toast(`Looking for covers for ${n} game${n === 1 ? '' : 's'}…`);
+  const before = state.games.filter((g) => !g.cover).length;
+  if (!before) return toast('Every game already has a cover.');
+  toast(`Looking for covers for ${before} game${before === 1 ? '' : 's'}…`);
   $('#dlg-settings').close();
-  watchArt(() => {
+  whenArtDone(() => {
     const still = state.games.filter((g) => !g.cover).length;
-    toast(still ? `Done. ${n - still} found, ${still} still without a cover.` : 'Done. All covers found.');
+    toast(still ? `Done. ${before - still} found, ${still} still without a cover.` : 'Done. All covers found.');
   });
+  await api.findMissingArt();
 });
+$('#btn-export').addEventListener('click', async () => {
+  const file = await api.exportData();
+  if (file) toast(`Library backed up to\n${file}`);
+});
+$('#btn-import').addEventListener('click', async () => {
+  const r = await api.importData();
+  if (!r) return;
+  if (r.error) return toast(r.error, true);
+  await refresh();
+  toast(`Restored ${r.total} game${r.total === 1 ? '' : 's'} (${r.added} new)`);
+});
+$('#btn-datafolder').addEventListener('click', () => api.openDataFolder());
+
+api.onAutoScan((names) =>
+  toast(names.length === 1 ? `New game added: ${names[0]}` : `${names.length} new games added`)
+);
+api.onMaximized((max) => {
+  $('[data-win="max"]').innerHTML = max ? '&#x2750;' : '&#x25A2;';
+  $('[data-win="max"]').title = max ? 'Restore' : 'Maximize';
+});
+
 document.querySelectorAll('[data-win]').forEach((b) => b.addEventListener('click', () => api.windowControl(b.dataset.win)));
 
 document.addEventListener('keydown', (e) => {
@@ -463,4 +644,14 @@ document.addEventListener('drop', (e) => {
 });
 
 api.onChanged(refresh);
-refresh().then(() => watchArt());
+(async () => {
+  const { settings } = await api.getLibrary();
+  // Restore where you left off.
+  state.filter = settings.lastFilter || 'all';
+  state.sort = settings.sort || 'name';
+  $('#sort').value = state.sort;
+  document.querySelectorAll('.nav-item[data-filter]').forEach((x) =>
+    x.classList.toggle('active', x.dataset.filter === state.filter)
+  );
+  await refresh();
+})();

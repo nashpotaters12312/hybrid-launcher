@@ -21,11 +21,29 @@ function loadLibrary() {
   }
 }
 
-function saveLibrary(lib) {
+function writeLibraryNow(lib) {
   fs.mkdirSync(path.dirname(libraryPath()), { recursive: true });
   const tmp = libraryPath() + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(lib, null, 2));
   fs.renameSync(tmp, libraryPath());
+}
+
+// Writes are batched so rapid changes (art lookups, scans) don't stall the UI.
+let saveTimer = null;
+function saveLibrary(lib) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    writeLibraryNow(lib);
+  }, 250);
+}
+
+function flushLibrary() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    writeLibraryNow(library);
+  }
 }
 
 let library;
@@ -38,8 +56,20 @@ function updateGame(id, patch) {
   return g;
 }
 
+let notifyPending = false;
 function notifyChanged() {
-  if (win && !win.isDestroyed()) win.webContents.send('library:changed');
+  if (notifyPending) return;
+  notifyPending = true;
+  setTimeout(() => {
+    notifyPending = false;
+    if (win && !win.isDestroyed()) win.webContents.send('library:changed');
+  }, 50);
+}
+
+function sendArtProgress() {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('art:progress', artQueue.length + (artBusy ? 1 : 0));
+  }
 }
 
 // Older versions launched Epic games through the Epic Games Launcher link.
@@ -74,6 +104,7 @@ function queueArt(ids, force = false) {
     if (force) artForced.add(id);
     if (!artQueue.includes(id)) artQueue.push(id);
   }
+  sendArtProgress();
   processArtQueue();
 }
 
@@ -102,10 +133,63 @@ async function processArtQueue() {
       }
       saveLibrary(library);
       notifyChanged();
+      sendArtProgress();
     }
   } finally {
     artBusy = false;
+    sendArtProgress();
   }
+}
+
+function addGame(game) {
+  const g = {
+    id: crypto.randomUUID(),
+    name: game.name?.trim() || 'Untitled',
+    type: game.type || 'exe',
+    target: game.target,
+    args: game.args || '',
+    workingDir: game.workingDir || '',
+    epicUrl: game.epicUrl || '',
+    cover: game.cover || '',
+    icon: game.icon || '',
+    source: game.source || 'custom',
+    sourceId: game.sourceId || '',
+    favorite: false,
+    hidden: false,
+    playtimeMinutes: 0,
+    lastPlayed: null,
+    addedAt: Date.now(),
+  };
+  library.games.push(g);
+  saveLibrary(library);
+  if (!g.cover) queueArt([g.id]);
+  return g;
+}
+
+// ---------- Scanning ----------
+function findNewGames() {
+  const found = [...scanners.scanSteam(), ...scanners.scanEpic()];
+  const existing = new Set(library.games.map((g) => `${g.source}:${g.sourceId}`));
+  const fresh = found.filter((f) => !existing.has(`${f.source}:${f.sourceId}`));
+  return { found: found.length, fresh };
+}
+
+async function autoScan() {
+  const { fresh } = findNewGames();
+  if (!fresh.length) return;
+  for (const f of fresh) {
+    let icon = '';
+    if (f.iconFrom) {
+      try {
+        icon = (await app.getFileIcon(f.iconFrom, { size: 'large' })).toDataURL();
+      } catch {
+        /* no icon */
+      }
+    }
+    addGame({ ...f, icon });
+  }
+  notifyChanged();
+  if (win && !win.isDestroyed()) win.webContents.send('scan:auto', fresh.map((f) => f.name));
 }
 
 // ---------- Launching ----------
@@ -167,30 +251,7 @@ function registerIpc() {
     settings: library.settings || {},
   }));
 
-  ipcMain.handle('library:add', (_e, game) => {
-    const g = {
-      id: crypto.randomUUID(),
-      name: game.name?.trim() || 'Untitled',
-      type: game.type || 'exe',
-      target: game.target,
-      args: game.args || '',
-      workingDir: game.workingDir || '',
-      epicUrl: game.epicUrl || '',
-      cover: game.cover || '',
-      icon: game.icon || '',
-      source: game.source || 'custom',
-      sourceId: game.sourceId || '',
-      favorite: false,
-      hidden: false,
-      playtimeMinutes: 0,
-      lastPlayed: null,
-      addedAt: Date.now(),
-    };
-    library.games.push(g);
-    saveLibrary(library);
-    if (!g.cover) queueArt([g.id]);
-    return g;
-  });
+  ipcMain.handle('library:add', (_e, game) => addGame(game));
 
   ipcMain.handle('library:update', (_e, id, patch) => {
     const before = library.games.find((x) => x.id === id);
@@ -230,8 +291,59 @@ function registerIpc() {
 
   ipcMain.handle('settings:set', (_e, patch) => {
     library.settings = { ...(library.settings || {}), ...patch };
+    if ('startWithWindows' in patch) applyLoginItem();
     saveLibrary(library);
     return library.settings;
+  });
+
+  ipcMain.handle('app:info', () => ({
+    version: app.getVersion(),
+    canAutoStart: app.isPackaged && process.platform === 'win32',
+  }));
+
+  ipcMain.handle('data:openFolder', () => shell.openPath(app.getPath('userData')));
+
+  ipcMain.handle('data:export', async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Back up library',
+      defaultPath: path.join(app.getPath('documents'), `hybrid-launcher-backup-${stamp}.json`),
+      filters: [{ name: 'Library backup', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePath) return null;
+    flushLibrary();
+    const { sgdbKey, ...settings } = library.settings || {}; // keep the API key out of backups
+    fs.writeFileSync(r.filePath, JSON.stringify({ ...library, settings }, null, 2));
+    return r.filePath;
+  });
+
+  ipcMain.handle('data:import', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Restore library backup',
+      properties: ['openFile'],
+      filters: [{ name: 'Library backup', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePaths[0]) return null;
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
+    } catch {
+      return { error: "That file isn't a valid backup." };
+    }
+    if (!Array.isArray(data.games)) return { error: "That file isn't a Hybrid Launcher backup." };
+    // Merge: games from the backup replace matching ones, everything else is kept.
+    const byId = new Map(library.games.map((g) => [g.id, g]));
+    let added = 0;
+    for (const g of data.games) {
+      if (!g || !g.id || !g.target) continue;
+      if (!byId.has(g.id)) added++;
+      byId.set(g.id, g);
+    }
+    library.games = [...byId.values()];
+    library.settings = { ...(data.settings || {}), ...(library.settings || {}) };
+    saveLibrary(library);
+    notifyChanged();
+    return { added, total: data.games.length };
   });
 
   ipcMain.handle('game:launch', async (_e, id) => {
@@ -286,12 +398,7 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('scan:run', async () => {
-    const found = [...scanners.scanSteam(), ...scanners.scanEpic()];
-    const existing = new Set(library.games.map((g) => `${g.source}:${g.sourceId}`));
-    const fresh = found.filter((f) => !existing.has(`${f.source}:${f.sourceId}`));
-    return { found: found.length, fresh };
-  });
+  ipcMain.handle('scan:run', async () => findNewGames());
 
   ipcMain.handle('window:control', (_e, action) => {
     if (!win) return;
@@ -312,10 +419,27 @@ function prettifyName(file) {
 }
 
 // ---------- Window ----------
+function applyLoginItem() {
+  if (!app.isPackaged || process.platform !== 'win32') return;
+  app.setLoginItemSettings({
+    openAtLogin: !!library.settings?.startWithWindows,
+    args: ['--hidden'],
+  });
+}
+
+function boundsAreVisible(b) {
+  const { screen } = require('electron');
+  return screen.getAllDisplays().some(({ workArea: a }) =>
+    b.x < a.x + a.width - 100 && b.x + b.width > a.x + 100 && b.y >= a.y - 10 && b.y < a.y + a.height - 100
+  );
+}
+
 function createWindow() {
+  const saved = library.settings?.window;
+  const bounds = saved && boundsAreVisible(saved) ? saved : { width: 1280, height: 800 };
   win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    ...bounds,
+    show: false,
     minWidth: 900,
     minHeight: 600,
     frame: false,
@@ -330,6 +454,33 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  const startHidden = process.argv.includes('--hidden') && library.settings?.startMinimized;
+  win.once('ready-to-show', () => {
+    if (saved?.maximized) win.maximize();
+    if (startHidden) {
+      win.showInactive();
+      win.minimize();
+    } else {
+      win.show();
+    }
+  });
+
+  const remember = () => {
+    if (win.isDestroyed() || win.isMinimized()) return;
+    const maximized = win.isMaximized();
+    const b = maximized ? (library.settings?.window || win.getNormalBounds()) : win.getBounds();
+    library.settings = { ...(library.settings || {}), window: { ...b, maximized } };
+    saveLibrary(library);
+  };
+  let t;
+  const later = () => { clearTimeout(t); t = setTimeout(remember, 400); };
+  win.on('resize', later);
+  win.on('move', later);
+  win.on('maximize', remember);
+  win.on('unmaximize', remember);
+  win.on('maximize', () => win.webContents.send('window:maximized', true));
+  win.on('unmaximize', () => win.webContents.send('window:maximized', false));
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -353,10 +504,13 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     createWindow();
     // Fill in art for games that don't have any yet.
-    win.webContents.once('did-finish-load', () =>
-      queueArt(library.games.filter(needsArt).map((g) => g.id))
-    );
+    applyLoginItem();
+    win.webContents.once('did-finish-load', () => {
+      if (library.settings?.autoScan) autoScan();
+      queueArt(library.games.filter(needsArt).map((g) => g.id));
+    });
   });
 
+  app.on('before-quit', flushLibrary);
   app.on('window-all-closed', () => app.quit());
 }

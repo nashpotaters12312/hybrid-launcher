@@ -11,13 +11,14 @@ One launcher for every game on your Windows PC: Steam, Epic Games, and any game'
 - **Tracks play time** for games launched from an `.exe` (including Epic games), and shows when you last played each game.
 - **Organize your library** with favorites, a *Continue playing* row, search (Ctrl+F or `/`), sorting, filtering by source, and hiding games.
 - **Launch options** for each game, e.g. `-windowed -novid`.
-- An option to minimize the launcher when a game starts.
+- **Settings:** start with Windows (optionally minimized), minimize while playing, automatically add newly installed games, accent color, cover size, show or hide *Continue playing*, animations on or off, and back up or restore your library.
+- **Smooth:** cards are reused rather than redrawn, so covers never flicker; panels and dialogs animate; the app remembers its window size and position and your last filter and sort.
 
 ## Install
 
 1. Open the **Actions** tab on GitHub, pick the latest successful **Build Windows installer** run, and download the **Hybrid-Launcher-Setup** artifact.
    - Or push a tag such as `v1.0.0`; the installer is then attached to a GitHub Release.
-2. Unzip it and run `Hybrid-Launcher-Setup-1.1.0.exe`.
+2. Unzip it and run `Hybrid-Launcher-Setup-1.2.0.exe`.
 3. The installer isn't code-signed, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
 
 The installer adds Start Menu and desktop shortcuts and can be uninstalled from *Settings → Apps*.
