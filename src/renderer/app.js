@@ -402,7 +402,7 @@ function renderDetail() {
     return;
   }
   const sig = [g.id, g.name, g.cover, g.icon, g.running, g.favorite, g.hidden, g.target, g.args, g.type,
-    Math.round(g.playtimeMinutes || 0), formatAgo(g.lastPlayed), (g.collections || []).join(','),
+    Math.round(g.playtimeMinutes || 0), formatAgo(g.lastPlayed), (g.collections || []).join(','), g.installDir, g.viaLauncher,
     state.collections.join(',')].join('|');
   if (sig === detailSig) return;
   // Don't yank the notes box away while it's being typed in.
@@ -433,7 +433,9 @@ function renderDetail() {
       ),
       el('div', { class: 'target' }, g.target + (g.args ? `  ${g.args}` : '')),
       g.type === 'url' && g.source !== 'custom'
-        ? el('div', { class: 'muted', style: 'font-size:12px' }, `Launches through ${SOURCE_LABEL[g.source]}. Play time is tracked by that app.`)
+        ? el('div', { class: 'muted', style: 'font-size:12px' }, g.installDir
+          ? `Opens through ${g.source === 'epic' ? 'the Epic Games Launcher' : 'Steam'}. Once the game has started, the launcher shows it as running so you can stop it.`
+          : `Opens through ${g.source === 'epic' ? 'the Epic Games Launcher' : SOURCE_LABEL[g.source]}.`)
         : null,
       el('div', { class: 'detail-actions' },
         el('button', { class: 'btn', onclick: () => toggle(g, 'favorite') }, g.favorite ? '★ Unfavorite' : '☆ Favorite'),

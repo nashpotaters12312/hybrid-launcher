@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('launcher', {
   platform: () => ipcRenderer.invoke('app:platform'),
   onPickRequest: (cb) => ipcRenderer.on('ui:pick', () => cb()),
   onErrorToast: (cb) => ipcRenderer.on('toast:error', (_e, msg) => cb(msg)),
+  onToast: (cb) => ipcRenderer.on('toast', (_e, msg) => cb(msg)),
   updateStatus: () => ipcRenderer.invoke('update:get'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),

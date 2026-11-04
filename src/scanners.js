@@ -95,14 +95,17 @@ async function scanSteam() {
       const appsDir = path.join(lib, 'steamapps');
       const files = await fsp.readdir(appsDir).catch(() => []);
       return Promise.all(
-        files.filter((f) => /^appmanifest_\d+\.acf$/.test(f)).map((f) => readSafe(path.join(appsDir, f)))
+        files.filter((f) => /^appmanifest_\d+\.acf$/.test(f)).map(async (f) => ({
+          acf: await readSafe(path.join(appsDir, f)),
+          appsDir,
+        }))
       );
     })
   );
 
   const games = [];
   const seen = new Set();
-  for (const acf of perLibrary.flat()) {
+  for (const { acf, appsDir } of perLibrary.flat()) {
     if (!acf) continue;
     const state = parseVdf(acf).appstate || {};
     const appid = state.appid;
@@ -116,6 +119,9 @@ async function scanSteam() {
       cover: STEAM_ART(appid, 'library_600x900.jpg'),
       source: 'steam',
       sourceId: appid,
+      // Where the game is installed: used to notice when it's running
+      // (Steam starts it, not us) so it can be stopped and timed.
+      installDir: state.installdir ? path.join(appsDir, 'common', state.installdir) : '',
     });
   }
   return games;
@@ -141,9 +147,11 @@ async function scanEpic() {
       const exe = m.InstallLocation && m.LaunchExecutable
         ? path.join(m.InstallLocation, m.LaunchExecutable)
         : '';
-      // Run the game's own .exe so the Epic Games Launcher isn't opened.
-      // Fall back to the Epic link only if we can't find the executable.
-      const direct = exe && (await exists(exe));
+      // Run the game's own .exe so the Epic Games Launcher isn't opened, except
+      // for online-only games (e.g. Fortnite): those need the Epic launcher to
+      // sign the player in and quit straight away when started directly.
+      const needsLauncher = m.bCanRunOffline === false || m.bRequiresAuth === true;
+      const direct = !needsLauncher && exe && (await exists(exe));
       return {
         name: m.DisplayName,
         type: direct ? 'exe' : 'url',
@@ -155,6 +163,8 @@ async function scanEpic() {
         source: 'epic',
         sourceId: m.AppName,
         iconFrom: exe,
+        installDir: m.InstallLocation || '',
+        needsLauncher,
       };
     } catch {
       return null; // ignore broken manifests

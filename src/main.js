@@ -116,16 +116,33 @@ function sendArtProgress() {
 
 // Older versions launched Epic games through the Epic Games Launcher link.
 // Switch any such entries to run the game's .exe directly when it's installed.
-async function migrateEpicToDirect() {
-  const legacy = library.games.filter((g) => g.source === 'epic' && g.type === 'url');
-  if (!legacy.length) return;
-  const scanned = new Map((await scanners.scanEpic()).map((e) => [e.sourceId, e]));
+// Keeps Steam / Epic entries in sync with what the stores report:
+// - fills in install folders (so the launcher can tell when a game runs)
+// - online-only Epic games (e.g. Fortnite) launch through the Epic launcher
+// - other Epic games run their own .exe directly
+async function syncStoreGames() {
+  const needs = library.games.some((g) => g.source === 'steam' || g.source === 'epic');
+  if (!needs) return;
+  const [steam, epic] = await Promise.all([scanners.scanSteam(), scanners.scanEpic()]);
+  const steamById = new Map(steam.map((s) => [s.sourceId, s]));
+  const epicById = new Map(epic.map((e) => [e.sourceId, e]));
   let changed = false;
-  for (const g of legacy) {
-    const e = scanned.get(g.sourceId);
-    if (!e || e.type !== 'exe') continue;
-    Object.assign(g, { type: 'exe', target: e.target, args: e.args, workingDir: e.workingDir, epicUrl: e.epicUrl });
-    changed = true;
+  for (const g of library.games) {
+    const s = g.source === 'steam' ? steamById.get(g.sourceId) : g.source === 'epic' ? epicById.get(g.sourceId) : null;
+    if (!s) continue;
+    if (s.installDir && g.installDir !== s.installDir) {
+      g.installDir = s.installDir;
+      changed = true;
+    }
+    if (g.source !== 'epic') continue;
+    if (s.epicUrl && !g.epicUrl) g.epicUrl = s.epicUrl;
+    if (s.needsLauncher && g.type === 'exe') {
+      Object.assign(g, { type: 'url', target: s.epicUrl, args: '', viaLauncher: true });
+      changed = true;
+    } else if (!s.needsLauncher && !g.viaLauncher && g.type === 'url' && s.type === 'exe') {
+      Object.assign(g, { type: 'exe', target: s.target, args: s.args, workingDir: s.workingDir });
+      changed = true;
+    }
   }
   if (changed) {
     saveLibrary(library);
@@ -206,6 +223,8 @@ function addGame(game) {
     args: game.args || '',
     workingDir: game.workingDir || '',
     epicUrl: game.epicUrl || '',
+    installDir: game.installDir || '',
+    viaLauncher: !!game.needsLauncher,
     cover: game.cover || '',
     icon: '',
     source: game.source || 'custom',
@@ -298,10 +317,12 @@ async function launchGame(id) {
   if (running.has(id)) throw new Error(`${g.name} is already running.`);
 
   if (g.type === 'url') {
-    // Steam / Epic / any protocol launcher — hand off to Windows.
+    // Steam / Epic / any protocol launcher — hand off to Windows, then watch
+    // the game's install folder so we notice when it actually starts.
     await shell.openExternal(g.target);
     markLaunched(g);
-    return { tracked: false };
+    const watching = watchForStoreLaunch(g);
+    return { tracked: watching, viaStore: true };
   }
 
   if (!fs.existsSync(g.target)) throw new Error(`File not found:\n${g.target}`);
@@ -338,8 +359,7 @@ async function launchGame(id) {
   }
 
   const startedAt = Date.now();
-  const folder = path.dirname(g.target);
-  running.set(id, { startedAt, pid: child.pid, folder: safeGameFolder(folder) });
+  running.set(id, { startedAt, pid: child.pid, folder: gameFolder(g) });
   child.on('exit', () => onGameProcessExit(id, startedAt));
   child.unref();
   markLaunched(g);
@@ -371,16 +391,50 @@ function safeGameFolder(folder) {
   return f;
 }
 
+// The folder a game lives in: the store's install folder when known (covers
+// games whose real .exe is in a subfolder), else the folder of its .exe.
+function gameFolder(g) {
+  const dir = g.installDir || (g.type === 'exe' ? path.dirname(g.target) : '');
+  return safeGameFolder(dir);
+}
+
+// Names of the .exe files inside a game folder. Used to recognise the game's
+// processes when Windows hides their location (anti-cheat protected games).
+const exeNameCache = new Map();
+function exeNamesIn(folder) {
+  if (exeNameCache.has(folder)) return exeNameCache.get(folder);
+  const names = new Set();
+  const skip = /crash|unins|setup|redist|vcredist|vc_redist|dxsetup|easyanticheat|battleye|eac_|prereq|helper|report/i;
+  const walk = (dir, depth) => {
+    if (depth > 4 || names.size > 200) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) walk(path.join(dir, e.name), depth + 1);
+      else if (/\.exe$/i.test(e.name) && !skip.test(e.name)) names.add(e.name);
+    }
+  };
+  walk(folder, 0);
+  const list = [...names];
+  exeNameCache.set(folder, list);
+  return list;
+}
+
 // PIDs of processes whose .exe lives inside `folder` (Windows only).
 function processesInFolder(folder) {
   if (!folder) return Promise.resolve([]);
-  const script = "$f = $env:HL_FOLDER + '\\'; " +
-    'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and ' +
-    '$_.ExecutablePath.StartsWith($f, [StringComparison]::OrdinalIgnoreCase) } | ' +
+  const script = "$f = $env:HL_FOLDER + '\\'; $n = @($env:HL_NAMES -split '\\|' | Where-Object { $_ }); " +
+    'Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and ' +
+    '$_.ExecutablePath.StartsWith($f, [StringComparison]::OrdinalIgnoreCase)) -or ' +
+    '(-not $_.ExecutablePath -and $n -contains $_.Name) } | ' +
     'ForEach-Object { $_.ProcessId }';
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      env: { ...process.env, HL_FOLDER: folder },
+      env: { ...process.env, HL_FOLDER: folder, HL_NAMES: exeNamesIn(folder).join('|') },
       windowsHide: true,
       timeout: 15000,
     }, (err, out) => {
@@ -391,27 +445,75 @@ function processesInFolder(folder) {
 }
 
 const WATCH_EVERY_MS = 15000;
+const QUICK_EXIT_MS = 20000;
 
-async function onGameProcessExit(id, startedAt) {
-  const entry = running.get(id);
-  if (!entry) return;
-  entry.pid = null;
-  const still = await processesInFolder(entry.folder);
-  if (!still.length || !running.has(id)) return recordSession(id, startedAt);
-  // The game itself is still open: keep watching its folder.
+function sendToast(message) {
+  if (win && !win.isDestroyed()) win.webContents.send('toast', message);
+}
+
+// Keep a game marked as running while anything from its folder is open.
+function keepWatching(id, entry) {
+  clearInterval(entry.watcher);
   entry.watcher = setInterval(async () => {
     if (!running.has(id)) return;
     const left = await processesInFolder(entry.folder);
-    if (!left.length) recordSession(id, startedAt);
+    if (!left.length) recordSession(id, entry.startedAt);
   }, WATCH_EVERY_MS);
+}
+
+async function onGameProcessExit(id, startedAt) {
+  const entry = running.get(id);
+  if (!entry || entry.stopping) return; // being stopped by the user: stopGame records it
+  entry.pid = null;
+  const still = await processesInFolder(entry.folder);
+  if (!running.has(id) || entry.stopping) return;
+  if (still.length) return keepWatching(id, entry); // the real game is still open
+
+  // An Epic game that quit within seconds of starting usually needs the Epic
+  // launcher (sign-in / anti-cheat). Open it that way and remember it.
+  const g = library.games.find((x) => x.id === id);
+  const quickExit = Date.now() - startedAt < QUICK_EXIT_MS;
+  if (g && g.source === 'epic' && g.epicUrl && !g.viaLauncher && quickExit) {
+    clearInterval(entry.watcher);
+    running.delete(id);
+    Object.assign(g, { type: 'url', target: g.epicUrl, args: '', viaLauncher: true });
+    saveLibrary(library);
+    notifyChanged();
+    sendToast(`${g.name} closed right away, so it's opening through the Epic Games Launcher instead. It will open that way from now on.`);
+    launchGame(id).catch((err) => sendToast(err.message));
+    return;
+  }
+  recordSession(id, startedAt);
+}
+
+// Games started by Steam or Epic: wait (up to 3 minutes) for the game to
+// appear, then treat it like any running game: Stop button and play time.
+const STORE_START_WAIT_MS = 3 * 60 * 1000;
+function watchForStoreLaunch(g) {
+  const folder = gameFolder(g);
+  if (!folder) return false;
+  const id = g.id;
+  const began = Date.now();
+  const poll = setInterval(async () => {
+    if (running.has(id)) return clearInterval(poll);
+    if (Date.now() - began > STORE_START_WAIT_MS) return clearInterval(poll);
+    const pids = await processesInFolder(folder);
+    if (!pids.length || running.has(id)) return;
+    clearInterval(poll);
+    const entry = { startedAt: Date.now(), pid: null, folder };
+    running.set(id, entry);
+    keepWatching(id, entry);
+    notifyChanged();
+  }, 4000);
+  return true;
 }
 
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    return err.code === 'EPERM'; // exists, but we're not allowed to touch it
   }
 }
 
@@ -440,6 +542,8 @@ async function stopGame(id) {
   const entry = running.get(id);
   const g = library.games.find((x) => x.id === id);
   if (!entry || !g) return { error: "That game isn't running." };
+  if (entry.stopping) return { error: `${g.name} is already being stopped.` };
+  entry.stopping = true;
   const targets = async () => {
     const pids = new Set(await processesInFolder(entry.folder));
     if (entry.pid && isAlive(entry.pid)) pids.add(entry.pid);
@@ -456,9 +560,19 @@ async function stopGame(id) {
     pids = (await targets()).filter(isAlive);
     if (!pids.length) break;
   }
-  if (pids.length) await killPids(pids, true);
+  const forced = pids.length > 0;
+  if (forced) {
+    await killPids(pids, true);
+    await new Promise((r) => setTimeout(r, 1500));
+    const left = (await targets()).filter(isAlive);
+    if (left.length) {
+      // Usually anti-cheat protection: Windows won't let other programs close it.
+      entry.stopping = false;
+      return { error: `Windows didn't allow the launcher to close ${g.name}. Some games with anti-cheat can only be closed from inside the game.` };
+    }
+  }
   recordSession(id, entry.startedAt);
-  return { stopped: true, forced: pids.length > 0 };
+  return { stopped: true, forced };
 }
 
 // Closing the launcher mid-game: keep the time played so far.
@@ -986,7 +1100,7 @@ if (!app.requestSingleInstanceLock()) {
     // Housekeeping runs after the window is up so it never delays startup.
     win.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
-        await migrateEpicToDirect();
+        await syncStoreGames().catch(() => {});
         if (await images.migrateImages(library.games, { iconsDir: dirs.icons, coversDir: dirs.covers })) {
           saveLibrary(library);
           notifyChanged();

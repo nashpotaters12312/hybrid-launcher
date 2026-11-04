@@ -496,3 +496,5 @@ document.addEventListener('keydown', (e) => {
   if (select) select.value = size;
   toast(`Text size: ${TEXT_SIZE_LABEL[size]}`);
 });
+
+api.onToast((msg) => toast(msg));
