@@ -36,6 +36,7 @@
       <div id="collections-nav"></div>
       <div class="sidebar-foot">
         <div id="art-status" class="art-status hidden"></div>
+        <button class="update-btn" id="btn-update" hidden></button>
         <button class="nav-item" id="btn-settings">&#9881;&nbsp; Settings</button>
       </div>
     </nav>
@@ -149,6 +150,15 @@
           </div>
           <label class="switch"><span><b>Show &ldquo;Continue playing&rdquo;</b><small>Your recent games at the top of the library.</small></span><input type="checkbox" data-setting="showContinue" data-default="true" /></label>
           <label class="switch"><span><b>Animations</b><small>Turn off for a snappier, motion-free interface.</small></span><input type="checkbox" data-setting="animations" data-default="true" /></label>
+        </section>
+
+        <section>
+          <h3>Updates</h3>
+          <div class="setting-row">
+            <span><b id="update-version"></b><small class="muted" id="update-line"></small></span>
+            <button type="button" class="btn" id="btn-check-update">Check for updates</button>
+          </div>
+          <label class="switch"><span><b>Download updates automatically</b><small>New versions download in the background; you choose when to restart.</small></span><input type="checkbox" data-setting="autoUpdate" data-default="true" /></label>
         </section>
 
         <section>

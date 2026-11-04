@@ -1,14 +1,20 @@
 name: Build Windows installer
 
+# Every push builds the installer. When package.json has a version that
+# hasn't been released yet, the build is also published as a GitHub Release
+# (installer + latest.yml), which is what the app's auto-updater reads.
 on:
   push:
     branches: [main, 'claude/**']
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -23,7 +29,35 @@ jobs:
 
       - run: npm ci
 
+      - name: Is this a new version?
+        id: version
+        shell: bash
+        run: |
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ] && ! git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Version $V has no release yet: it will be published."
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Version $V is already released (or this isn't a push): build only."
+          fi
+
+      - name: Tag the release
+        if: steps.version.outputs.release == 'true'
+        shell: bash
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Build and publish release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish always
+
       - name: Build installer
+        if: steps.version.outputs.release != 'true'
         run: npx electron-builder --win nsis --publish never
 
       - name: Upload installer
@@ -31,9 +65,3 @@ jobs:
         with:
           name: Hybrid-Launcher-Setup
           path: dist/*.exe
-
-      - name: Attach installer to GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: dist/*.exe

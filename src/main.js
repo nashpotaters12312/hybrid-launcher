@@ -7,6 +7,7 @@ const scanners = require('./scanners');
 const { createArtFinder } = require('./art');
 const images = require('./images');
 const picker = require('./picker');
+const { autoUpdater } = require('electron-updater');
 
 const dirs = {
   get covers() { return path.join(app.getPath('userData'), 'covers'); },
@@ -399,6 +400,18 @@ function registerIpc() {
   });
 
   ipcMain.handle('game:shortcut', (_e, id) => createDesktopShortcut(id));
+
+  ipcMain.handle('update:get', () => updateState);
+  ipcMain.handle('update:check', () => {
+    checkForUpdates();
+    return updateState;
+  });
+  ipcMain.handle('update:download', () => {
+    if (updateState.state !== 'available') return;
+    sendUpdate({ ...updateState, state: 'downloading', percent: 0 });
+    autoUpdater.downloadUpdate().catch((err) => sendUpdate({ state: 'error', message: updateErrorMessage(err) }));
+  });
+  ipcMain.handle('update:install', () => installUpdate());
   ipcMain.handle('app:platform', () => process.platform);
 
   ipcMain.handle('library:add', (_e, game) => addGame(game));
@@ -454,6 +467,7 @@ function registerIpc() {
   ipcMain.handle('settings:set', (_e, patch) => {
     library.settings = { ...(library.settings || {}), ...patch };
     if ('startWithWindows' in patch) applyLoginItem();
+    if ('autoUpdate' in patch && app.isPackaged) autoUpdater.autoDownload = patch.autoUpdate !== false;
     if ('showTray' in patch) {
       if (patch.showTray) createTray();
       else if (tray) {
@@ -617,6 +631,65 @@ function launchFromArgs(argv) {
   return true;
 }
 
+// ---------- Updates ----------
+// Checks GitHub Releases for a newer version, downloads it in the
+// background and installs it when the user clicks Update (or on quit).
+let updateState = { state: 'idle' };
+const UPDATE_EVERY_MS = 4 * 60 * 60 * 1000;
+
+function sendUpdate(next) {
+  updateState = next;
+  if (win && !win.isDestroyed()) win.webContents.send('update:status', updateState);
+}
+
+function updateErrorMessage(err) {
+  const msg = String(err?.message || err || '');
+  if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ERR_INTERNET|net::/i.test(msg)) return "Couldn't reach GitHub. Check your internet connection.";
+  if (/404|latest\.yml/i.test(msg)) return 'No published update found yet.';
+  return "Couldn't check for updates right now.";
+}
+
+function checkForUpdates() {
+  if (!app.isPackaged) {
+    sendUpdate({ state: 'dev' });
+    return;
+  }
+  if (['checking', 'downloading', 'ready'].includes(updateState.state)) return;
+  autoUpdater.checkForUpdates().catch((err) => sendUpdate({ state: 'error', message: updateErrorMessage(err) }));
+}
+
+function setupUpdater() {
+  if (!app.isPackaged) {
+    updateState = { state: 'dev' };
+    return;
+  }
+  autoUpdater.autoDownload = library.settings?.autoUpdate !== false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => sendUpdate({ state: 'checking' }));
+  autoUpdater.on('update-not-available', () => sendUpdate({ state: 'none', checkedAt: Date.now() }));
+  autoUpdater.on('update-available', (info) =>
+    sendUpdate({ state: autoUpdater.autoDownload ? 'downloading' : 'available', version: info.version, percent: 0 })
+  );
+  autoUpdater.on('download-progress', (p) =>
+    sendUpdate({ state: 'downloading', version: updateState.version, percent: Math.round(p.percent || 0) })
+  );
+  autoUpdater.on('update-downloaded', (info) => {
+    sendUpdate({ state: 'ready', version: info.version });
+    updateTray();
+  });
+  autoUpdater.on('error', (err) => sendUpdate({ state: 'error', message: updateErrorMessage(err) }));
+  setTimeout(checkForUpdates, 8000);
+  setInterval(checkForUpdates, UPDATE_EVERY_MS);
+}
+
+function installUpdate() {
+  if (updateState.state !== 'ready') return;
+  quitting = true; // don't let close-to-tray swallow the restart
+  recordAllRunning();
+  flushLibrary();
+  autoUpdater.quitAndInstall(false, true);
+}
+
 // ---------- Tray ----------
 let tray = null;
 let quitting = false;
@@ -645,6 +718,7 @@ function updateTray() {
       : [{ label: 'No games played yet', enabled: false }]),
     { type: 'separator' },
     { label: '🎲 Pick for me', click: () => { showWindow(); win.webContents.send('ui:pick'); } },
+    ...(updateState.state === 'ready' ? [{ label: `⬆ Restart to update to ${updateState.version}`, click: installUpdate }] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => { tray.destroy(); tray = null; app.quit(); } },
   ]));
@@ -762,6 +836,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     createWindow();
     if (library.settings?.showTray !== false) createTray();
+    setupUpdater();
     // Fill in art for games that don't have any yet.
     applyLoginItem();
     // Housekeeping runs after the window is up so it never delays startup.

@@ -509,3 +509,19 @@ dialog.ask { width: min(380px, 92vw); }
   box-shadow: 0 6px 20px var(--shadow); animation: pop-in .08s ease-out;
 }
 .draw-target[hidden] { display: none; }
+
+/* ---------- Update button ---------- */
+.update-btn {
+  position: relative; overflow: hidden; border: 1px solid var(--accent); border-radius: 8px; padding: 9px 10px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); cursor: pointer;
+  font-weight: 600; text-align: left; animation: fade-up .25s var(--ease); isolation: isolate;
+}
+.update-btn[hidden] { display: none; }
+.update-btn::before { /* download progress */
+  content: ""; position: absolute; inset: 0 auto 0 0; width: var(--progress, 0%);
+  background: color-mix(in srgb, var(--accent) 25%, transparent); transition: width .3s ease; z-index: -1;
+}
+.update-btn.ready { background: var(--accent); color: #fff; }
+.update-btn.ready:hover { background: var(--accent-2); }
+.update-btn:disabled { cursor: default; }
+.setting-row small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }

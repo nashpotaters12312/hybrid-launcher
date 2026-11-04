@@ -411,3 +411,65 @@ api.onPickRequest(() => {
   if (!document.querySelector('dialog[open]')) openPicker();
 });
 api.onErrorToast((msg) => toast(msg, true));
+
+// ---------- Updates ----------
+let update = { state: 'idle' };
+
+function updateLine(s) {
+  switch (s.state) {
+    case 'dev': return 'Updates work in the installed app.';
+    case 'checking': return 'Checking for updates…';
+    case 'none': return "You're up to date.";
+    case 'available': return `Version ${s.version} is available.`;
+    case 'downloading': return `Downloading version ${s.version}… ${s.percent || 0}%`;
+    case 'ready': return `Version ${s.version} is ready. Restart to update.`;
+    case 'error': return s.message || "Couldn't check for updates.";
+    default: return '';
+  }
+}
+
+function renderUpdate(s) {
+  const prev = update.state;
+  update = s || { state: 'idle' };
+  const btn = $('#btn-update');
+  const show = ['available', 'downloading', 'ready'].includes(update.state);
+  btn.hidden = !show;
+  btn.disabled = update.state === 'downloading';
+  btn.classList.toggle('ready', update.state === 'ready');
+  btn.style.setProperty('--progress', `${update.percent || 0}%`);
+  btn.textContent = update.state === 'ready'
+    ? `⬆ Update to ${update.version}`
+    : update.state === 'downloading'
+      ? `Downloading… ${update.percent || 0}%`
+      : `⬇ Get version ${update.version}`;
+  btn.title = update.state === 'ready' ? 'Restart Hybrid Launcher and install the update' : '';
+  $('#update-line').textContent = updateLine(update);
+  const checkBtn = $('#btn-check-update');
+  checkBtn.disabled = ['checking', 'downloading'].includes(update.state);
+  checkBtn.textContent = update.state === 'ready' ? 'Restart to update' : 'Check for updates';
+  if (update.state === 'ready' && prev !== 'ready') {
+    toast(`Version ${update.version} is ready. Click Update in the sidebar to restart.`);
+  }
+}
+
+async function runUpdateAction() {
+  if (update.state === 'available') return api.downloadUpdate();
+  if (update.state !== 'ready') return;
+  const playing = state.games.filter((g) => g.running).map((g) => g.name);
+  const note = playing.length ? `\n\n${playing.join(', ')} will keep running; play time so far is saved.` : '';
+  if (!confirm(`Restart Hybrid Launcher to install version ${update.version}?${note}`)) return;
+  api.installUpdate();
+}
+
+$('#btn-update').addEventListener('click', runUpdateAction);
+$('#btn-check-update').addEventListener('click', async () => {
+  if (update.state === 'ready') return runUpdateAction();
+  renderUpdate(await api.checkForUpdates());
+});
+$('#btn-settings').addEventListener('click', async () => {
+  const info = await api.appInfo();
+  $('#update-version').textContent = `Hybrid Launcher ${info.version}`;
+  renderUpdate(await api.updateStatus());
+});
+api.onUpdateStatus(renderUpdate);
+api.updateStatus().then(renderUpdate);

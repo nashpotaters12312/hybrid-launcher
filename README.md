@@ -24,12 +24,16 @@ One launcher for every game on your Windows PC: Steam, Epic Games, and any game'
 
 ## Install
 
-1. Open the **Actions** tab on GitHub, pick the latest successful **Build Windows installer** run, and download the **Hybrid-Launcher-Setup** artifact.
-   - Or push a tag such as `v1.0.0`; the installer is then attached to a GitHub Release.
-2. Unzip it and run `Hybrid-Launcher-Setup-1.6.0.exe`.
-3. The installer isn't code-signed, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
+1. Open the repository's **Releases** page on GitHub and download the latest `Hybrid-Launcher-Setup-<version>.exe`.
+2. Run it. The installer isn't code-signed, so Windows SmartScreen may warn you: click **More info → Run anyway**.
 
 The installer adds Start Menu and desktop shortcuts and can be uninstalled from *Settings → Apps*.
+
+### Updates
+
+The app checks for new versions on startup and every few hours, downloads them in the background, and shows an **Update** button in the sidebar. Click it to restart into the new version (or it installs the next time you quit). You can also use *Settings → Updates → Check for updates*, and turn off automatic downloads there.
+
+Each push that changes the version in `package.json` is built and published as a GitHub Release by the *Build Windows installer* workflow, which is what installed copies update from.
 
 Your library is stored in `%APPDATA%\Hybrid Launcher\library.json`.
 
