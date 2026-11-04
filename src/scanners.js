@@ -1,6 +1,7 @@
 // Detects installed games from Steam and Epic Games on Windows.
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 function readSafe(file) {
   try {
@@ -31,14 +32,44 @@ function parseVdf(text) {
   return obj();
 }
 
+// Steam records where it is installed in the registry; read it so installs
+// on any drive or folder are found, not just the default locations.
+function steamPathsFromRegistry() {
+  if (process.platform !== 'win32') return [];
+  const queries = [
+    ['HKCU\\Software\\Valve\\Steam', 'SteamPath'],
+    ['HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam', 'InstallPath'],
+    ['HKLM\\SOFTWARE\\Valve\\Steam', 'InstallPath'],
+  ];
+  const out = [];
+  for (const [key, value] of queries) {
+    try {
+      const res = execFileSync('reg', ['query', key, '/v', value], {
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const m = res.match(/REG_(?:EXPAND_)?SZ\s+(.+)/);
+      if (m) out.push(path.normalize(m[1].trim()));
+    } catch {
+      /* key not present */
+    }
+  }
+  return out;
+}
+
 function steamRoots() {
   const candidates = [
+    ...steamPathsFromRegistry(),
     path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Steam'),
     path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Steam'),
     'D:\\Steam',
     'D:\\Program Files (x86)\\Steam',
   ];
-  return candidates.filter((p) => fs.existsSync(path.join(p, 'steamapps')));
+  const unique = [...new Set(candidates.map((p) => p.toLowerCase()))].map(
+    (lc) => candidates.find((p) => p.toLowerCase() === lc)
+  );
+  return unique.filter((p) => fs.existsSync(path.join(p, 'steamapps')));
 }
 
 // Tools/redistributables Steam installs that aren't games.

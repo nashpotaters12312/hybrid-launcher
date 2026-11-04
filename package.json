@@ -1,7 +1,7 @@
 {
   "name": "hybrid-launcher",
   "productName": "Hybrid Launcher",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "One launcher for all your games — Steam, Epic, and anything else on your PC.",
   "main": "src/main.js",
   "author": "nashpotaters12312",
@@ -18,10 +18,22 @@
   "build": {
     "appId": "com.nashpotaters.hybridlauncher",
     "productName": "Hybrid Launcher",
-    "files": ["src/**/*", "build/icon.png"],
-    "directories": { "output": "dist" },
+    "files": [
+      "src/**/*",
+      "build/icon.png"
+    ],
+    "directories": {
+      "output": "dist"
+    },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -31,6 +43,14 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Hybrid Launcher",
       "artifactName": "Hybrid-Launcher-Setup-${version}.exe"
+    }
+  },
+  "overrides": {
+    "@electron/universal": {
+      "minimatch": "^11.0.4"
+    },
+    "app-builder-lib": {
+      "minimatch": "^11.0.4"
     }
   }
 }
