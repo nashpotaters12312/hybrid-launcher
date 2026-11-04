@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: file: https:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Hybrid Launcher</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand"><img src="../../build/icon.png" alt="" /> Hybrid Launcher</div>
+    <div class="win-controls">
+      <button data-win="min" title="Minimize">&#x2014;</button>
+      <button data-win="max" title="Maximize">&#x25A2;</button>
+      <button data-win="close" class="close" title="Close">&#x2715;</button>
+    </div>
+  </header>
+
+  <div class="app">
+    <nav class="sidebar">
+      <div class="nav-section">Library</div>
+      <button class="nav-item active" data-filter="all">All games <span class="count" id="c-all"></span></button>
+      <button class="nav-item" data-filter="favorites">Favorites <span class="count" id="c-favorites"></span></button>
+      <button class="nav-item" data-filter="recent">Recently played</button>
+      <div class="nav-section">Sources</div>
+      <button class="nav-item" data-filter="steam">Steam <span class="count" id="c-steam"></span></button>
+      <button class="nav-item" data-filter="epic">Epic Games <span class="count" id="c-epic"></span></button>
+      <button class="nav-item" data-filter="custom">My games <span class="count" id="c-custom"></span></button>
+      <button class="nav-item" data-filter="hidden">Hidden <span class="count" id="c-hidden"></span></button>
+      <div class="sidebar-foot">
+        <label class="toggle"><input type="checkbox" id="opt-minimize" /> Minimize when a game starts</label>
+      </div>
+    </nav>
+
+    <main class="content">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Search your games…" autocomplete="off" />
+        <select id="sort">
+          <option value="name">A–Z</option>
+          <option value="recent">Last played</option>
+          <option value="playtime">Most played</option>
+          <option value="added">Recently added</option>
+        </select>
+        <button class="btn" id="btn-scan">Scan for games</button>
+        <button class="btn primary" id="btn-add">+ Add game</button>
+      </div>
+
+      <section id="continue" class="continue hidden"></section>
+      <section id="grid" class="grid"></section>
+      <div id="empty" class="empty hidden">
+        <h2>Your library is empty</h2>
+        <p>Scan your PC for Steam and Epic games, or add any game's .exe or shortcut yourself.</p>
+        <div class="empty-actions">
+          <button class="btn" data-action="scan">Scan for games</button>
+          <button class="btn primary" data-action="add">+ Add game</button>
+        </div>
+      </div>
+    </main>
+
+    <aside id="detail" class="detail hidden"></aside>
+  </div>
+
+  <dialog id="dlg-add">
+    <form method="dialog" id="form-add">
+      <h2 id="dlg-add-title">Add a game</h2>
+      <label>Game file or launcher URL
+        <div class="row">
+          <input name="target" required placeholder="C:\Games\MyGame\game.exe  or  steam://rungameid/570" />
+          <button type="button" class="btn" id="btn-browse">Browse…</button>
+        </div>
+      </label>
+      <label>Name <input name="name" required /></label>
+      <label>Launch options <input name="args" placeholder="Optional, e.g. -windowed -novid" /></label>
+      <label>Cover image
+        <div class="row">
+          <input name="cover" placeholder="Image URL or pick a file" />
+          <button type="button" class="btn" id="btn-cover">Pick…</button>
+        </div>
+      </label>
+      <div class="dlg-actions">
+        <button type="button" class="btn" value="cancel" id="btn-add-cancel">Cancel</button>
+        <button type="submit" class="btn primary" value="ok">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-scan">
+    <form method="dialog" id="form-scan">
+      <h2>Games found</h2>
+      <p id="scan-summary" class="muted"></p>
+      <div id="scan-list" class="scan-list"></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn" id="btn-scan-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="btn-scan-add">Add selected</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
