@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('launcher', {
   pickImage: () => ipcRenderer.invoke('dialog:pickImage'),
   fileIcon: (target) => ipcRenderer.invoke('game:icon', target),
   scan: () => ipcRenderer.invoke('scan:run'),
+  pickForMe: (opts) => ipcRenderer.invoke('pick:game', opts),
   findArt: (id) => ipcRenderer.invoke('art:find', id),
   findMissingArt: () => ipcRenderer.invoke('art:findMissing'),
   artBroken: (id) => ipcRenderer.invoke('art:broken', id),

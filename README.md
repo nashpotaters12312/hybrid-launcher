@@ -9,6 +9,7 @@ One launcher for every game on your Windows PC: Steam, Epic Games, and any game'
 - **Automatic cover art.** Every game gets a cover automatically, found by name in Steam's store and saved locally so it works offline. For games that aren't on Steam, add a free [SteamGridDB](https://www.steamgriddb.com) API key in *Settings*. You can also use **Find cover** on any game, or pick your own image with *Edit*.
 - **Epic games start directly** from their own `.exe`, without opening the Epic Games Launcher. Some Epic games require the launcher for sign-in or DRM; those may still open it themselves.
 - **Tracks play time** for games launched from an `.exe` (including Epic games), and shows when you last played each game.
+- **Pick for me.** Can't decide? Click *Pick for me* and a game is chosen from your library, favouring ones you haven't played in a while, have never played, or love. Choose *Surprise me*, *Never played*, *Haven't played in a while* or *A favorite*. Add an Anthropic API key in *Settings* and Claude picks based on your mood ("something chill for 30 minutes") and tells you why. When you use the AI picker, your game names and play history are sent to Anthropic.
 - **Organize your library** with favorites, a *Continue playing* row, search (Ctrl+F or `/`), sorting, filtering by source, and hiding games.
 - **Launch options** for each game, e.g. `-windowed -novid`.
 - **Settings:** start with Windows (optionally minimized), minimize while playing, automatically add newly installed games, accent color, cover size, show or hide *Continue playing*, animations on or off, and back up or restore your library.
@@ -18,7 +19,7 @@ One launcher for every game on your Windows PC: Steam, Epic Games, and any game'
 
 1. Open the **Actions** tab on GitHub, pick the latest successful **Build Windows installer** run, and download the **Hybrid-Launcher-Setup** artifact.
    - Or push a tag such as `v1.0.0`; the installer is then attached to a GitHub Release.
-2. Unzip it and run `Hybrid-Launcher-Setup-1.3.0.exe`.
+2. Unzip it and run `Hybrid-Launcher-Setup-1.4.0.exe`.
 3. The installer isn't code-signed, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
 
 The installer adds Start Menu and desktop shortcuts and can be uninstalled from *Settings → Apps*.

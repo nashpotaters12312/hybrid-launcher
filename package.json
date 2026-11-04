@@ -1,7 +1,7 @@
 {
   "name": "hybrid-launcher",
   "productName": "Hybrid Launcher",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "One launcher for all your games — Steam, Epic, and anything else on your PC.",
   "main": "src/main.js",
   "author": "nashpotaters12312",
@@ -56,5 +56,8 @@
     "app-builder-lib": {
       "minimatch": "^11.0.4"
     }
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.5.0"
   }
 }

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const scanners = require('./scanners');
 const { createArtFinder } = require('./art');
 const images = require('./images');
+const picker = require('./picker');
 
 const dirs = {
   get covers() { return path.join(app.getPath('userData'), 'covers'); },
@@ -324,7 +325,7 @@ function registerIpc() {
     });
     if (r.canceled || !r.filePath) return null;
     flushLibrary();
-    const { sgdbKey, ...settings } = library.settings || {}; // keep the API key out of backups
+    const { sgdbKey, anthropicKey, ...settings } = library.settings || {}; // keep API keys out of backups
     fs.writeFileSync(r.filePath, JSON.stringify({ ...library, settings }, null, 2));
     return r.filePath;
   });
@@ -408,6 +409,19 @@ function registerIpc() {
   });
 
   ipcMain.handle('scan:run', () => findNewGames());
+
+  ipcMain.handle('pick:game', async (_e, opts = {}) => {
+    const games = library.games.map((g) => ({ ...g, running: running.has(g.id) }));
+    const key = library.settings?.anthropicKey;
+    if (opts.ai && key) {
+      const r = await picker.aiPick(games, { apiKey: key, mood: opts.mood, mode: opts.mode, excludeIds: opts.excludeIds });
+      if (!r.error) return r;
+      // AI unavailable: still give the player a game, and say why.
+      const fallback = picker.smartPick(games, opts);
+      return fallback.error ? r : { ...fallback, warning: r.error };
+    }
+    return picker.smartPick(games, opts);
+  });
 
   ipcMain.handle('window:control', (_e, action) => {
     if (!win) return;

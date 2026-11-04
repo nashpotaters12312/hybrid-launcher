@@ -546,6 +546,7 @@ function fillSettings() {
     else input.value = setting(key, input.id === 'opt-cardsize' ? 160 : '');
   }
   $('#opt-sgdb').value = state.settings.sgdbKey || '';
+  $('#opt-anthropic').value = state.settings.anthropicKey || '';
   $('#swatches').replaceChildren(...ACCENTS.map((c) =>
     el('button', {
       type: 'button',
@@ -614,6 +615,110 @@ $('#btn-import').addEventListener('click', async () => {
   toast(`Restored ${r.total} game${r.total === 1 ? '' : 's'} (${r.added} new)`);
 });
 $('#btn-datafolder').addEventListener('click', () => api.openDataFolder());
+$('#opt-anthropic').addEventListener('change', (e) => changeSetting({ anthropicKey: e.target.value.trim() }));
+
+// ---------- Pick for me ----------
+const pick = { mode: 'surprise', seen: [], gameId: null, busy: false };
+
+function openPicker() {
+  const hasAi = !!state.settings.anthropicKey;
+  $('#pick-mood-row').classList.toggle('hidden', !hasAi);
+  $('#pick-ai-hint').classList.toggle('hidden', hasAi);
+  $('#pick-stage').className = 'pick-stage';
+  $('#btn-pick-go').textContent = 'Pick';
+  $('#btn-pick-play').classList.add('hidden');
+  $('#btn-pick-show').classList.add('hidden');
+  pick.seen = [];
+  pick.gameId = null;
+  $('#dlg-pick').showModal();
+  if (hasAi) $('#pick-mood').focus();
+}
+
+function showPickCover(g) {
+  const cover = $('#pick-cover');
+  cover.textContent = g.cover ? '' : g.name;
+  cover.style.background = g.cover
+    ? `url("${g.cover}") center/cover no-repeat, ${gradientFor(g.name)}`
+    : gradientFor(g.name);
+  $('#pick-name').textContent = g.name;
+}
+
+async function rollPick() {
+  if (pick.busy) return;
+  const pool = state.games.filter((g) => !g.hidden);
+  if (!pool.length) return toast('Add some games to your library first.');
+  pick.busy = true;
+  const stage = $('#pick-stage');
+  const goBtn = $('#btn-pick-go');
+  goBtn.disabled = true;
+  $('#btn-pick-play').classList.add('hidden');
+  $('#btn-pick-show').classList.add('hidden');
+  $('#pick-reason').textContent = '';
+  $('#pick-warning').textContent = '';
+  stage.className = 'pick-stage show rolling';
+
+  const mood = $('#pick-mood').value;
+  const useAi = !!state.settings.anthropicKey;
+  const request = api.pickForMe({ mode: pick.mode, mood, ai: useAi, excludeIds: pick.seen });
+
+  // Shuffle through covers while the pick is made (at least ~1s for the fun of it).
+  let i = Math.floor(Math.random() * pool.length);
+  const animate = setting('animations', true);
+  const timer = animate ? setInterval(() => showPickCover(pool[i++ % pool.length]), 90) : null;
+  if (!animate) $('#pick-name').textContent = useAi ? 'Thinking…' : '';
+  const [result] = await Promise.all([request, new Promise((r) => setTimeout(r, animate ? 1100 : 0))]);
+  clearInterval(timer);
+  pick.busy = false;
+  goBtn.disabled = false;
+
+  if (result.error) {
+    stage.className = 'pick-stage';
+    toast(result.error, true);
+    return;
+  }
+  const g = state.games.find((x) => x.id === result.gameId);
+  if (!g) {
+    stage.className = 'pick-stage';
+    return;
+  }
+  pick.gameId = g.id;
+  pick.seen.push(g.id);
+  showPickCover(g);
+  $('#pick-reason').textContent = result.reason;
+  $('#pick-warning').textContent = result.warning ? `${result.warning} Used a smart pick instead.` : '';
+  stage.className = 'pick-stage show landed';
+  goBtn.textContent = 'Pick again';
+  $('#btn-pick-play').classList.remove('hidden');
+  $('#btn-pick-show').classList.remove('hidden');
+}
+
+$('#btn-pick').addEventListener('click', openPicker);
+$('#btn-pick-go').addEventListener('click', rollPick);
+$('#pick-mood').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    rollPick();
+  }
+});
+$('#form-pick').addEventListener('submit', (e) => e.preventDefault());
+$('#pick-modes').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  pick.mode = chip.dataset.mode;
+  pick.seen = [];
+  document.querySelectorAll('#pick-modes .chip').forEach((c) => c.classList.toggle('active', c === chip));
+});
+$('#btn-pick-close').addEventListener('click', () => $('#dlg-pick').close());
+$('#btn-pick-play').addEventListener('click', () => {
+  $('#dlg-pick').close();
+  launch(pick.gameId);
+});
+$('#btn-pick-show').addEventListener('click', () => {
+  $('#dlg-pick').close();
+  state.selectedId = null;
+  select(pick.gameId);
+  document.querySelector(`.card[data-id="${pick.gameId}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+});
 
 api.onAutoScan((names) =>
   toast(names.length === 1 ? `New game added: ${names[0]}` : `${names.length} new games added`)

@@ -43,6 +43,7 @@
           <option value="playtime">Most played</option>
           <option value="added">Recently added</option>
         </select>
+        <button class="btn pick-btn" id="btn-pick" title="Pick a random game for me">&#127922; Pick for me</button>
         <button class="btn" id="btn-scan">Scan for games</button>
         <button class="btn primary" id="btn-add">+ Add game</button>
       </div>
@@ -129,6 +130,16 @@
         </section>
 
         <section>
+          <h3>AI game picker</h3>
+          <p class="muted small">&ldquo;Pick for me&rdquo; works without this. Add an Anthropic API key
+            (from console.anthropic.com) to let Claude pick based on your mood, like &ldquo;something chill for 30 minutes&rdquo;.
+            When you use it, your game names and play history are sent to Anthropic.</p>
+          <label class="field">Anthropic API key (optional)
+            <input id="opt-anthropic" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+          </label>
+        </section>
+
+        <section>
           <h3>Cover art</h3>
           <p class="muted small">Covers are found automatically using Steam's store, which covers most PC games.
             For games that aren't on Steam, add a free SteamGridDB API key
@@ -152,6 +163,38 @@
 
       <div class="dlg-actions">
         <button type="submit" class="btn primary">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-pick" class="pick">
+    <form method="dialog" id="form-pick">
+      <h2>Pick a game for me</h2>
+      <div class="chips" id="pick-modes">
+        <button type="button" class="chip active" data-mode="surprise">&#127922; Surprise me</button>
+        <button type="button" class="chip" data-mode="new">&#10024; Never played</button>
+        <button type="button" class="chip" data-mode="comeback">&#8617; Haven&rsquo;t played in a while</button>
+        <button type="button" class="chip" data-mode="favorite">&#9733; A favorite</button>
+      </div>
+      <label class="field" id="pick-mood-row"><span>What are you in the mood for? <span class="ai-tag">AI</span></span>
+        <input id="pick-mood" placeholder="e.g. something chill for 30 minutes, or co-op with a friend" autocomplete="off" />
+      </label>
+      <p class="muted small" id="pick-ai-hint">Tip: add an Anthropic API key in Settings and Claude will pick based on your mood.</p>
+
+      <div class="pick-stage" id="pick-stage">
+        <div class="pick-cover" id="pick-cover"></div>
+        <div class="pick-info">
+          <div class="pick-name" id="pick-name"></div>
+          <p class="pick-reason" id="pick-reason"></p>
+          <p class="pick-warning" id="pick-warning"></p>
+        </div>
+      </div>
+
+      <div class="dlg-actions">
+        <button type="button" class="btn" id="btn-pick-close">Close</button>
+        <button type="button" class="btn" id="btn-pick-show">Show in library</button>
+        <button type="button" class="btn primary" id="btn-pick-go">Pick</button>
+        <button type="button" class="btn play" id="btn-pick-play">&#9654;&nbsp; Play</button>
       </div>
     </form>
   </dialog>
