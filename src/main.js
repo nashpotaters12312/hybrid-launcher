@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const scanners = require('./scanners');
+const { createArtFinder } = require('./art');
 
 let win;
 const running = new Map(); // gameId -> { startedAt }
@@ -55,6 +56,56 @@ function migrateEpicToDirect() {
     changed = true;
   }
   if (changed) saveLibrary(library);
+}
+
+// ---------- Automatic cover art ----------
+const ART_RETRY_MS = 7 * 24 * 60 * 60 * 1000; // re-check games with no art weekly
+let artFinder;
+const artQueue = [];
+const artForced = new Set();
+let artBusy = false;
+
+function needsArt(g) {
+  return !g.cover && (!g.artCheckedAt || Date.now() - g.artCheckedAt > ART_RETRY_MS);
+}
+
+function queueArt(ids, force = false) {
+  for (const id of ids) {
+    if (force) artForced.add(id);
+    if (!artQueue.includes(id)) artQueue.push(id);
+  }
+  processArtQueue();
+}
+
+async function processArtQueue() {
+  if (artBusy) return;
+  artBusy = true;
+  try {
+    while (artQueue.length) {
+      const id = artQueue.shift();
+      const force = artForced.delete(id);
+      const g = library.games.find((x) => x.id === id);
+      if (!g || (!force && !needsArt(g))) continue;
+      let found = null;
+      try {
+        found = await artFinder.find(g, { sgdbKey: library.settings?.sgdbKey });
+      } catch {
+        /* offline or service error: try again later */
+      }
+      const current = library.games.find((x) => x.id === id);
+      if (!current) continue;
+      current.artCheckedAt = Date.now();
+      if (found && (!current.cover || force)) {
+        current.cover = found.cover;
+        current.coverAuto = true;
+        if (found.steamAppId) current.steamAppId = found.steamAppId;
+      }
+      saveLibrary(library);
+      notifyChanged();
+    }
+  } finally {
+    artBusy = false;
+  }
 }
 
 // ---------- Launching ----------
@@ -137,10 +188,39 @@ function registerIpc() {
     };
     library.games.push(g);
     saveLibrary(library);
+    if (!g.cover) queueArt([g.id]);
     return g;
   });
 
-  ipcMain.handle('library:update', (_e, id, patch) => updateGame(id, patch));
+  ipcMain.handle('library:update', (_e, id, patch) => {
+    const before = library.games.find((x) => x.id === id);
+    if (before && 'cover' in patch && patch.cover !== before.cover) patch.coverAuto = false;
+    const g = updateGame(id, patch);
+    if (g && !g.cover) queueArt([g.id], true);
+    return g;
+  });
+
+  // Find art for one game now (replaces an automatic cover, never a custom one
+  // unless the user asks from the button).
+  ipcMain.handle('art:find', (_e, id) => queueArt([id], true));
+
+  ipcMain.handle('art:findMissing', () => {
+    const ids = library.games.filter((g) => !g.cover).map((g) => g.id);
+    queueArt(ids, true);
+    return ids.length;
+  });
+
+  // The renderer reports a cover that failed to load (moved file, dead URL).
+  ipcMain.handle('art:broken', (_e, id) => {
+    const g = library.games.find((x) => x.id === id);
+    if (!g || !g.cover || g.artBrokenAt > Date.now() - ART_RETRY_MS) return;
+    g.artBrokenAt = Date.now();
+    g.cover = '';
+    saveLibrary(library);
+    queueArt([id], true);
+  });
+
+  ipcMain.handle('art:status', () => ({ pending: artQueue.length + (artBusy ? 1 : 0) }));
 
   ipcMain.handle('library:remove', (_e, id) => {
     library.games = library.games.filter((g) => g.id !== id);
@@ -266,8 +346,16 @@ if (!app.requestSingleInstanceLock()) {
     app.setAppUserModelId('com.nashpotaters.hybridlauncher');
     library = loadLibrary();
     migrateEpicToDirect();
+    artFinder = createArtFinder({
+      fetch: (url, opts) => net.fetch(url, opts),
+      coversDir: path.join(app.getPath('userData'), 'covers'),
+    });
     registerIpc();
     createWindow();
+    // Fill in art for games that don't have any yet.
+    win.webContents.once('did-finish-load', () =>
+      queueArt(library.games.filter(needsArt).map((g) => g.id))
+    );
   });
 
   app.on('window-all-closed', () => app.quit());

@@ -29,7 +29,8 @@
       <button class="nav-item" data-filter="custom">My games <span class="count" id="c-custom"></span></button>
       <button class="nav-item" data-filter="hidden">Hidden <span class="count" id="c-hidden"></span></button>
       <div class="sidebar-foot">
-        <label class="toggle"><input type="checkbox" id="opt-minimize" /> Minimize when a game starts</label>
+        <div id="art-status" class="art-status hidden"></div>
+        <button class="nav-item" id="btn-settings">&#9881;&nbsp; Settings</button>
       </div>
     </nav>
 
@@ -93,6 +94,28 @@
       <div class="dlg-actions">
         <button type="button" class="btn" id="btn-scan-cancel">Cancel</button>
         <button type="submit" class="btn primary" id="btn-scan-add">Add selected</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-settings">
+    <form method="dialog" id="form-settings">
+      <h2>Settings</h2>
+      <label class="toggle check"><input type="checkbox" id="opt-minimize" /> Minimize the launcher when a game starts</label>
+
+      <h3>Cover art</h3>
+      <p class="muted small">Covers are found automatically using Steam's store, which covers most PC games.
+        For games that aren't on Steam, add a free SteamGridDB API key
+        (sign in at steamgriddb.com, then Preferences &rarr; API).</p>
+      <label>SteamGridDB API key (optional)
+        <input id="opt-sgdb" type="password" placeholder="Paste your key" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="row">
+        <button type="button" class="btn" id="btn-find-missing">Find missing covers now</button>
+      </div>
+
+      <div class="dlg-actions">
+        <button type="submit" class="btn primary">Done</button>
       </div>
     </form>
   </dialog>

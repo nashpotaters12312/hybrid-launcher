@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { STEAM_ART } = require('./art');
 
 function readSafe(file) {
   try {
@@ -110,7 +111,7 @@ function scanSteam() {
         name: state.name || `Steam App ${appid}`,
         type: 'url',
         target: `steam://rungameid/${appid}`,
-        cover: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900.jpg`,
+        cover: STEAM_ART(appid, 'library_600x900.jpg'),
         source: 'steam',
         sourceId: appid,
       });

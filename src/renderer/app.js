@@ -100,7 +100,11 @@ function coverNode(g) {
   };
   if (g.cover) {
     const img = el('img', { class: 'art', src: g.cover, alt: '', loading: 'lazy' });
-    img.addEventListener('error', () => { img.remove(); fallback(); });
+    img.addEventListener('error', () => {
+      img.remove();
+      fallback();
+      reportBrokenArt(g.id);
+    });
     box.append(img);
   } else {
     fallback();
@@ -171,8 +175,9 @@ function renderContinue() {
         )
       );
       // Steam has a wide header image that suits this row better than the tall cover.
-      const wide = g.source === 'steam'
-        ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${g.sourceId}/header.jpg`
+      const steamId = g.steamAppId || (g.source === 'steam' ? g.sourceId : '');
+      const wide = steamId
+        ? `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${steamId}/header.jpg`
         : g.cover;
       hero.style.background = wide ? `url("${wide}") center/cover no-repeat, ${gradientFor(g.name)}` : gradientFor(g.name);
       hero.addEventListener('click', () => launch(g.id));
@@ -229,12 +234,49 @@ function renderDetail() {
       el('div', { class: 'detail-actions' },
         el('button', { class: 'btn', onclick: () => toggle(g, 'favorite') }, g.favorite ? '★ Unfavorite' : '☆ Favorite'),
         el('button', { class: 'btn', onclick: () => openEditor(g) }, 'Edit'),
+        el('button', { class: 'btn', onclick: () => findArt(g) }, g.cover ? 'New cover' : 'Find cover'),
         g.type !== 'url' ? el('button', { class: 'btn', onclick: () => api.openFolder(g.id) }, 'Open folder') : null,
         el('button', { class: 'btn', onclick: () => toggle(g, 'hidden') }, g.hidden ? 'Unhide' : 'Hide'),
         el('button', { class: 'btn danger', onclick: () => removeGame(g) }, 'Remove')
       )
     )
   );
+}
+
+// ---------- Cover art ----------
+const reportedBroken = new Set();
+function reportBrokenArt(id) {
+  if (reportedBroken.has(id)) return;
+  reportedBroken.add(id);
+  api.artBroken(id);
+}
+
+async function findArt(g) {
+  toast(`Looking for cover art for ${g.name}…`);
+  const before = g.cover;
+  await api.findArt(g.id);
+  watchArt(() => {
+    const now = state.games.find((x) => x.id === g.id);
+    if (now && now.cover && now.cover !== before) toast(`Found cover art for ${g.name}`);
+    else toast(`No cover art found for ${g.name}. You can pick one with Edit.`);
+  });
+}
+
+// Show progress in the sidebar while the background lookup runs.
+let artTimer;
+function watchArt(onDone) {
+  clearInterval(artTimer);
+  const status = $('#art-status');
+  artTimer = setInterval(async () => {
+    const { pending } = await api.artStatus();
+    status.classList.toggle('hidden', pending === 0);
+    status.textContent = `Finding cover art… (${pending} left)`;
+    if (pending === 0) {
+      clearInterval(artTimer);
+      await refresh();
+      onDone && onDone();
+    }
+  }, 700);
 }
 
 // ---------- Actions ----------
@@ -321,6 +363,7 @@ addForm.addEventListener('submit', async (e) => {
   }
   $('#dlg-add').close();
   await refresh();
+  watchArt();
 });
 
 // ---------- Scan dialog ----------
@@ -359,13 +402,14 @@ $('#form-scan').addEventListener('submit', async (e) => {
   }
   $('#dlg-scan').close();
   await refresh();
+  watchArt();
   toast(`Added ${picked.length} game${picked.length === 1 ? '' : 's'}`);
 });
 
 // ---------- Wiring ----------
-document.querySelectorAll('.nav-item').forEach((b) =>
+document.querySelectorAll('.nav-item[data-filter]').forEach((b) =>
   b.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach((x) => x.classList.toggle('active', x === b));
+    document.querySelectorAll('.nav-item[data-filter]').forEach((x) => x.classList.toggle('active', x === b));
     state.filter = b.dataset.filter;
     render();
   })
@@ -378,6 +422,23 @@ $('#btn-scan').addEventListener('click', runScan);
 $('#empty [data-action="add"]').addEventListener('click', () => openEditor());
 $('#empty [data-action="scan"]').addEventListener('click', runScan);
 $('#opt-minimize').addEventListener('change', (e) => api.setSettings({ minimizeOnLaunch: e.target.checked }));
+$('#btn-settings').addEventListener('click', () => {
+  $('#opt-sgdb').value = state.settings.sgdbKey || '';
+  $('#dlg-settings').showModal();
+});
+$('#opt-sgdb').addEventListener('change', async (e) => {
+  state.settings = await api.setSettings({ sgdbKey: e.target.value.trim() });
+});
+$('#btn-find-missing').addEventListener('click', async () => {
+  const n = await api.findMissingArt();
+  if (!n) return toast('Every game already has a cover.');
+  toast(`Looking for covers for ${n} game${n === 1 ? '' : 's'}…`);
+  $('#dlg-settings').close();
+  watchArt(() => {
+    const still = state.games.filter((g) => !g.cover).length;
+    toast(still ? `Done. ${n - still} found, ${still} still without a cover.` : 'Done. All covers found.');
+  });
+});
 document.querySelectorAll('[data-win]').forEach((b) => b.addEventListener('click', () => api.windowControl(b.dataset.win)));
 
 document.addEventListener('keydown', (e) => {
@@ -402,4 +463,4 @@ document.addEventListener('drop', (e) => {
 });
 
 api.onChanged(refresh);
-refresh();
+refresh().then(() => watchArt());
