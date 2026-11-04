@@ -4,6 +4,7 @@
 // Found images are downloaded into userData/covers so they work offline.
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 const STEAM_ART = (id, file) =>
   `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${id}/${file}`;
@@ -44,7 +45,7 @@ function bestMatch(name, items, getName) {
   return best;
 }
 
-function createArtFinder({ fetch, coversDir }) {
+function createArtFinder({ fetch, coversDir, writeCover }) {
   async function getJson(url, headers = {}) {
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -99,10 +100,12 @@ function createArtFinder({ fetch, coversDir }) {
     const type = res.headers.get('content-type') || '';
     if (!type.startsWith('image/')) throw new Error('Not an image');
     const ext = type.includes('png') ? '.png' : type.includes('webp') ? '.webp' : '.jpg';
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (writeCover) return writeCover(buf, coversDir, `auto-${id}`, ext);
     fs.mkdirSync(coversDir, { recursive: true });
     const file = path.join(coversDir, `auto-${id}${ext}`);
-    fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
-    return 'file:///' + file.replace(/\\/g, '/') + `?v=${Date.now()}`;
+    fs.writeFileSync(file, buf);
+    return pathToFileURL(file).href + `?v=${Date.now()}`;
   }
 
   // Returns { cover, steamAppId } or null.

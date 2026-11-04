@@ -5,6 +5,12 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const scanners = require('./scanners');
 const { createArtFinder } = require('./art');
+const images = require('./images');
+
+const dirs = {
+  get covers() { return path.join(app.getPath('userData'), 'covers'); },
+  get icons() { return path.join(app.getPath('userData'), 'icons'); },
+};
 
 let win;
 const running = new Map(); // gameId -> { startedAt }
@@ -74,10 +80,10 @@ function sendArtProgress() {
 
 // Older versions launched Epic games through the Epic Games Launcher link.
 // Switch any such entries to run the game's .exe directly when it's installed.
-function migrateEpicToDirect() {
+async function migrateEpicToDirect() {
   const legacy = library.games.filter((g) => g.source === 'epic' && g.type === 'url');
   if (!legacy.length) return;
-  const scanned = new Map(scanners.scanEpic().map((e) => [e.sourceId, e]));
+  const scanned = new Map((await scanners.scanEpic()).map((e) => [e.sourceId, e]));
   let changed = false;
   for (const g of legacy) {
     const e = scanned.get(g.sourceId);
@@ -85,7 +91,10 @@ function migrateEpicToDirect() {
     Object.assign(g, { type: 'exe', target: e.target, args: e.args, workingDir: e.workingDir, epicUrl: e.epicUrl });
     changed = true;
   }
-  if (changed) saveLibrary(library);
+  if (changed) {
+    saveLibrary(library);
+    notifyChanged();
+  }
 }
 
 // ---------- Automatic cover art ----------
@@ -151,7 +160,7 @@ function addGame(game) {
     workingDir: game.workingDir || '',
     epicUrl: game.epicUrl || '',
     cover: game.cover || '',
-    icon: game.icon || '',
+    icon: '',
     source: game.source || 'custom',
     sourceId: game.sourceId || '',
     favorite: false,
@@ -160,6 +169,7 @@ function addGame(game) {
     lastPlayed: null,
     addedAt: Date.now(),
   };
+  g.icon = images.saveIcon(game.icon, dirs.icons, g.id);
   library.games.push(g);
   saveLibrary(library);
   if (!g.cover) queueArt([g.id]);
@@ -167,15 +177,16 @@ function addGame(game) {
 }
 
 // ---------- Scanning ----------
-function findNewGames() {
-  const found = [...scanners.scanSteam(), ...scanners.scanEpic()];
+async function findNewGames() {
+  const [steam, epic] = await Promise.all([scanners.scanSteam(), scanners.scanEpic()]);
+  const found = [...steam, ...epic];
   const existing = new Set(library.games.map((g) => `${g.source}:${g.sourceId}`));
   const fresh = found.filter((f) => !existing.has(`${f.source}:${f.sourceId}`));
   return { found: found.length, fresh };
 }
 
 async function autoScan() {
-  const { fresh } = findNewGames();
+  const { fresh } = await findNewGames();
   if (!fresh.length) return;
   for (const f of fresh) {
     let icon = '';
@@ -256,6 +267,7 @@ function registerIpc() {
   ipcMain.handle('library:update', (_e, id, patch) => {
     const before = library.games.find((x) => x.id === id);
     if (before && 'cover' in patch && patch.cover !== before.cover) patch.coverAuto = false;
+    if (patch.icon) patch.icon = images.saveIcon(patch.icon, dirs.icons, id);
     const g = updateGame(id, patch);
     if (g && !g.cover) queueArt([g.id], true);
     return g;
@@ -382,11 +394,8 @@ function registerIpc() {
     if (r.canceled || !r.filePaths[0]) return null;
     // Copy into userData so the cover survives the original being moved.
     const src = r.filePaths[0];
-    const dir = path.join(app.getPath('userData'), 'covers');
-    fs.mkdirSync(dir, { recursive: true });
-    const dest = path.join(dir, crypto.randomUUID() + path.extname(src));
-    fs.copyFileSync(src, dest);
-    return 'file:///' + dest.replace(/\\/g, '/');
+    const buf = await fs.promises.readFile(src);
+    return images.writeCover(buf, dirs.covers, crypto.randomUUID(), path.extname(src));
   });
 
   ipcMain.handle('game:icon', async (_e, target) => {
@@ -398,7 +407,7 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('scan:run', async () => findNewGames());
+  ipcMain.handle('scan:run', () => findNewGames());
 
   ipcMain.handle('window:control', (_e, action) => {
     if (!win) return;
@@ -450,6 +459,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: false,
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -496,18 +506,26 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     app.setAppUserModelId('com.nashpotaters.hybridlauncher');
     library = loadLibrary();
-    migrateEpicToDirect();
     artFinder = createArtFinder({
       fetch: (url, opts) => net.fetch(url, opts),
-      coversDir: path.join(app.getPath('userData'), 'covers'),
+      coversDir: dirs.covers,
+      writeCover: images.writeCover,
     });
     registerIpc();
     createWindow();
     // Fill in art for games that don't have any yet.
     applyLoginItem();
+    // Housekeeping runs after the window is up so it never delays startup.
     win.webContents.once('did-finish-load', () => {
-      if (library.settings?.autoScan) autoScan();
-      queueArt(library.games.filter(needsArt).map((g) => g.id));
+      setTimeout(async () => {
+        await migrateEpicToDirect();
+        if (await images.migrateImages(library.games, { iconsDir: dirs.icons, coversDir: dirs.covers })) {
+          saveLibrary(library);
+          notifyChanged();
+        }
+        if (library.settings?.autoScan) await autoScan();
+        queueArt(library.games.filter(needsArt).map((g) => g.id));
+      }, 300);
     });
   });
 

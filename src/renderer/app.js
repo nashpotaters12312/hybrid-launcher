@@ -110,6 +110,8 @@ function applyAppearance() {
   document.body.classList.toggle('no-anim', !setting('animations', true));
 }
 
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
 function visibleGames() {
   const q = state.query.trim().toLowerCase();
   let list = state.games.filter((g) => (state.filter === 'hidden' ? g.hidden : !g.hidden));
@@ -121,7 +123,7 @@ function visibleGames() {
   if (q) list = list.filter((g) => g.name.toLowerCase().includes(q));
 
   const sort = state.filter === 'recent' ? 'recent' : state.sort;
-  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  const byName = (a, b) => collator.compare(a.name, b.name);
   const cmp = {
     name: byName,
     recent: (a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || byName(a, b),
@@ -300,7 +302,8 @@ function renderDetail() {
     detailSig = '';
     return;
   }
-  const sig = JSON.stringify([g, formatAgo(g.lastPlayed)]);
+  const sig = [g.id, g.name, g.cover, g.icon, g.running, g.favorite, g.hidden, g.target, g.args, g.type,
+    Math.round(g.playtimeMinutes || 0), formatAgo(g.lastPlayed)].join('|');
   if (sig === detailSig) return;
   detailSig = sig;
 
@@ -645,7 +648,9 @@ document.addEventListener('drop', (e) => {
 
 api.onChanged(refresh);
 (async () => {
-  const { settings } = await api.getLibrary();
+  const { games, settings } = await api.getLibrary();
+  state.games = games;
+  state.settings = settings;
   // Restore where you left off.
   state.filter = settings.lastFilter || 'all';
   state.sort = settings.sort || 'name';
@@ -653,5 +658,6 @@ api.onChanged(refresh);
   document.querySelectorAll('.nav-item[data-filter]').forEach((x) =>
     x.classList.toggle('active', x.dataset.filter === state.filter)
   );
-  await refresh();
+  applyAppearance();
+  render(); // first paint straight from the initial load, no second round-trip
 })();
