@@ -19,13 +19,37 @@ const running = new Map(); // gameId -> { startedAt }
 // ---------- Library storage ----------
 const libraryPath = () => path.join(app.getPath('userData'), 'library.json');
 
-function loadLibrary() {
+function readLibraryFile(file) {
   try {
-    const data = JSON.parse(fs.readFileSync(libraryPath(), 'utf8'));
-    return Array.isArray(data.games) ? data : { games: [] };
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return data && Array.isArray(data.games) ? data : null;
   } catch {
-    return { games: [] };
+    return null;
   }
+}
+
+// If library.json is damaged, fall back to the last good copy instead of
+// starting empty and overwriting the user's games.
+function loadLibrary() {
+  const file = libraryPath();
+  const backup = file.replace(/\.json$/, '.backup.json');
+  const main = readLibraryFile(file);
+  if (main) {
+    try {
+      fs.copyFileSync(file, backup); // last known good copy
+    } catch {
+      /* not fatal */
+    }
+    return main;
+  }
+  if (fs.existsSync(file)) {
+    try {
+      fs.copyFileSync(file, file.replace(/\.json$/, `.damaged-${Date.now()}.json`));
+    } catch {
+      /* not fatal */
+    }
+  }
+  return readLibraryFile(file + '.tmp') || readLibraryFile(backup) || { games: [] };
 }
 
 function writeLibraryNow(lib) {
@@ -41,7 +65,12 @@ function saveLibrary(lib) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    writeLibraryNow(lib);
+    try {
+      writeLibraryNow(lib);
+    } catch (err) {
+      console.error('Saving the library failed, retrying:', err.message);
+      saveTimer = setTimeout(() => saveLibrary(lib), 2000);
+    }
   }, 250);
 }
 
@@ -49,7 +78,11 @@ function flushLibrary() {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
-    writeLibraryNow(library);
+    try {
+      writeLibraryNow(library);
+    } catch (err) {
+      console.error('Saving the library failed:', err.message);
+    }
   }
 }
 
@@ -105,8 +138,12 @@ const artQueue = [];
 const artForced = new Set();
 let artBusy = false;
 
+const isWebCover = (g) => /^https?:/i.test(g.cover || '');
+
 function needsArt(g) {
-  return !g.cover && (!g.artCheckedAt || Date.now() - g.artCheckedAt > ART_RETRY_MS);
+  const due = !g.artCheckedAt || Date.now() - g.artCheckedAt > ART_RETRY_MS;
+  // Missing covers, and Steam's web covers (saved locally so they work offline).
+  return due && (!g.cover || (isWebCover(g) && g.source === 'steam'));
 }
 
 function queueArt(ids, force = false) {
@@ -136,11 +173,18 @@ async function processArtQueue() {
       const current = library.games.find((x) => x.id === id);
       if (!current) continue;
       current.artCheckedAt = Date.now();
-      if (found && (!current.cover || force)) {
+      const upgradeWeb = isWebCover(current) && current.source === 'steam' && !images.fromFileUrl(current.cover);
+      if (found && (!current.cover || force || current.coverBroken || upgradeWeb)) {
         current.cover = found.cover;
         current.coverAuto = true;
         if (found.steamAppId) current.steamAppId = found.steamAppId;
+      } else if (current.coverBroken) {
+        const file = images.fromFileUrl(current.cover);
+        const gone = file ? !fs.existsSync(file) : (await artFinder.probe(current.cover)) === 'missing';
+        if (gone) current.cover = ''; // really gone: show the placeholder
+        else current.artBrokenAt = 0; // just couldn't load right now: try again later
       }
+      delete current.coverBroken;
       saveLibrary(library);
       notifyChanged();
       sendArtProgress();
@@ -206,25 +250,48 @@ async function autoScan() {
 
 // ---------- Launching ----------
 function recordSession(id, startedAt) {
-  const g = library.games.find((x) => x.id === id);
-  if (!g) return;
-  const minutes = (Date.now() - startedAt) / 60000;
-  g.playtimeMinutes = (g.playtimeMinutes || 0) + minutes;
-  saveLibrary(library);
+  if (!running.has(id)) return; // already recorded (e.g. on quit)
   running.delete(id);
+  const g = library.games.find((x) => x.id === id);
+  if (g) {
+    g.playtimeMinutes = (g.playtimeMinutes || 0) + (Date.now() - startedAt) / 60000;
+    saveLibrary(library);
+  }
   notifyChanged();
+}
+
+// Split launch options like: -windowed -path="C:\My Games\x" "two words"
+// Quotes only group words; they are not passed to the game.
+function parseArgs(text) {
+  return ((text || '').match(/(?:[^\s"]+|"[^"]*")+/g) || []).map((a) => a.replace(/"/g, ''));
+}
+
+const cmdQuote = (a) => (/[\s&()^|<>"]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
+
+function markLaunched(g) {
+  g.lastPlayed = Date.now();
+  saveLibrary(library);
+  if (library.settings?.minimizeOnLaunch && win) win.minimize();
+}
+
+// Resolves once the process has started, or rejects with the spawn error.
+function startProcess(file, args, opts) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, opts);
+    child.once('spawn', () => resolve(child));
+    child.once('error', reject);
+  });
 }
 
 async function launchGame(id) {
   const g = library.games.find((x) => x.id === id);
   if (!g) throw new Error('Game not found');
-
-  g.lastPlayed = Date.now();
-  saveLibrary(library);
+  if (running.has(id)) throw new Error(`${g.name} is already running.`);
 
   if (g.type === 'url') {
     // Steam / Epic / any protocol launcher — hand off to Windows.
     await shell.openExternal(g.target);
+    markLaunched(g);
     return { tracked: false };
   }
 
@@ -235,25 +302,44 @@ async function launchGame(id) {
     // Shortcuts (.lnk, .url) and anything else: let Windows open it.
     const err = await shell.openPath(g.target);
     if (err) throw new Error(err);
+    markLaunched(g);
     return { tracked: false };
   }
 
-  const args = (g.args || '').match(/(?:[^\s"]+|"[^"]*")+/g) || [];
-  const child = spawn(g.target, args.map((a) => a.replace(/^"|"$/g, '')), {
-    cwd: g.workingDir || path.dirname(g.target),
-    detached: true,
-    stdio: 'ignore',
-    shell: ext !== '.exe',
-  });
+  const args = parseArgs(g.args);
+  const isScript = ext !== '.exe';
+  const cwd = g.workingDir && fs.existsSync(g.workingDir) ? g.workingDir : path.dirname(g.target);
+  let child;
+  try {
+    child = isScript
+      // Batch files run through cmd; quote so folders with spaces work.
+      ? await startProcess([g.target, ...args].map(cmdQuote).join(' '), [], { cwd, detached: true, stdio: 'ignore', shell: true, windowsHide: true })
+      : await startProcess(g.target, args, { cwd, detached: true, stdio: 'ignore' });
+  } catch (err) {
+    // Games that need admin rights can't be started directly; Windows'
+    // own launcher shows the UAC prompt instead.
+    if (!isScript && (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'UNKNOWN')) {
+      const shellErr = await shell.openPath(g.target);
+      if (!shellErr) {
+        markLaunched(g);
+        return { tracked: false };
+      }
+    }
+    throw new Error(`Couldn't start ${g.name} (${err.code || err.message}).`);
+  }
+
   const startedAt = Date.now();
   running.set(id, { startedAt });
   child.on('exit', () => recordSession(id, startedAt));
-  child.on('error', () => running.delete(id));
   child.unref();
+  markLaunched(g);
   notifyChanged();
-
-  if (library.settings?.minimizeOnLaunch && win) win.minimize();
   return { tracked: true };
+}
+
+// Closing the launcher mid-game: keep the time played so far.
+function recordAllRunning() {
+  for (const [id, { startedAt }] of running) recordSession(id, startedAt);
 }
 
 // ---------- IPC ----------
@@ -269,6 +355,7 @@ function registerIpc() {
     const before = library.games.find((x) => x.id === id);
     if (before && 'cover' in patch && patch.cover !== before.cover) patch.coverAuto = false;
     if (patch.icon) patch.icon = images.saveIcon(patch.icon, dirs.icons, id);
+    if (before && 'target' in patch && patch.target !== before.target) patch.workingDir = '';
     const g = updateGame(id, patch);
     if (g && !g.cover) queueArt([g.id], true);
     return g;
@@ -288,8 +375,11 @@ function registerIpc() {
   ipcMain.handle('art:broken', (_e, id) => {
     const g = library.games.find((x) => x.id === id);
     if (!g || !g.cover || g.artBrokenAt > Date.now() - ART_RETRY_MS) return;
+    const file = images.fromFileUrl(g.cover);
+    if (file && fs.existsSync(file)) return; // file is fine, nothing to fix
+    if (!file && !net.isOnline()) return; // web cover just can't load offline
     g.artBrokenAt = Date.now();
-    g.cover = '';
+    g.coverBroken = true;
     saveLibrary(library);
     queueArt([id], true);
   });
@@ -297,8 +387,15 @@ function registerIpc() {
   ipcMain.handle('art:status', () => ({ pending: artQueue.length + (artBusy ? 1 : 0) }));
 
   ipcMain.handle('library:remove', (_e, id) => {
-    library.games = library.games.filter((g) => g.id !== id);
+    const g = library.games.find((x) => x.id === id);
+    library.games = library.games.filter((x) => x.id !== id);
     saveLibrary(library);
+    // Delete this game's own cover and icon files (only ones we created).
+    for (const url of [g?.cover, g?.icon]) {
+      const file = images.fromFileUrl(url);
+      const ours = file && [dirs.covers, dirs.icons].some((d) => file.startsWith(d + path.sep));
+      if (ours) fs.promises.unlink(file).catch(() => {});
+    }
     return true;
   });
 
@@ -481,7 +578,7 @@ function createWindow() {
 
   const startHidden = process.argv.includes('--hidden') && library.settings?.startMinimized;
   win.once('ready-to-show', () => {
-    if (saved?.maximized) win.maximize();
+    if (saved?.maximized && !startHidden) win.maximize();
     if (startHidden) {
       win.showInactive();
       win.minimize();
@@ -543,6 +640,9 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
-  app.on('before-quit', flushLibrary);
+  app.on('before-quit', () => {
+    recordAllRunning();
+    flushLibrary();
+  });
   app.on('window-all-closed', () => app.quit());
 }

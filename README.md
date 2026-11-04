@@ -19,7 +19,7 @@ One launcher for every game on your Windows PC: Steam, Epic Games, and any game'
 
 1. Open the **Actions** tab on GitHub, pick the latest successful **Build Windows installer** run, and download the **Hybrid-Launcher-Setup** artifact.
    - Or push a tag such as `v1.0.0`; the installer is then attached to a GitHub Release.
-2. Unzip it and run `Hybrid-Launcher-Setup-1.4.0.exe`.
+2. Unzip it and run `Hybrid-Launcher-Setup-1.4.1.exe`.
 3. The installer isn't code-signed, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
 
 The installer adds Start Menu and desktop shortcuts and can be uninstalled from *Settings → Apps*.

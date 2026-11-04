@@ -130,7 +130,19 @@ function createArtFinder({ fetch, coversDir, writeCover }) {
     return { cover, steamAppId };
   }
 
-  return { find };
+  // Is a web image really gone? 'missing' only on a definite 404/410 from
+  // the server; network trouble is 'unknown' so we never delete art offline.
+  async function probe(url) {
+    try {
+      const res = await fetch(url, { method: 'HEAD' });
+      if (res.ok) return 'ok';
+      return res.status === 404 || res.status === 410 ? 'missing' : 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  return { find, probe };
 }
 
 module.exports = { createArtFinder, normalize, bestMatch, STEAM_ART };

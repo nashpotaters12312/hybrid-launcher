@@ -42,6 +42,9 @@ function formatAgo(ts) {
   return new Date(ts).toLocaleDateString();
 }
 
+// Safe to put inside url("...") in CSS even if the path has quotes or brackets.
+const cssUrl = (u) => `url("${String(u).replace(/["\\\n]/g, encodeURIComponent)}")`;
+
 // Deterministic color pair for games with no artwork.
 function gradientFor(name) {
   let h = 0;
@@ -260,7 +263,7 @@ function renderContinue() {
       const wide = steamId
         ? `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${steamId}/header.jpg`
         : g.cover;
-      hero.style.background = wide ? `url("${wide}") center/cover no-repeat, ${gradientFor(g.name)}` : gradientFor(g.name);
+      hero.style.background = wide ? `${cssUrl(wide)} center/cover no-repeat, ${gradientFor(g.name)}` : gradientFor(g.name);
       hero.addEventListener('click', () => launch(g.id));
       return hero;
     }))
@@ -309,7 +312,7 @@ function renderDetail() {
 
   const art = el('div', { class: 'detail-art' });
   art.style.background = g.cover
-    ? `url("${g.cover}") center/cover no-repeat, ${gradientFor(g.name)}`
+    ? `${cssUrl(g.cover)} center/cover no-repeat, ${gradientFor(g.name)}`
     : gradientFor(g.name);
   if (!g.cover && g.icon) art.append(el('img', { class: 'icon', src: g.icon, alt: '' }));
   art.append(el('button', { class: 'detail-close', title: 'Close', onclick: () => select(null) }, '✕'));
@@ -417,6 +420,7 @@ const addForm = $('#form-add');
 const F = addForm.elements;
 
 function openEditor(g = null) {
+  if (document.querySelector('dialog[open]')) return false; // another dialog is in use
   state.editingId = g ? g.id : null;
   $('#dlg-add-title').textContent = g ? 'Edit game' : 'Add a game';
   addForm.reset();
@@ -427,6 +431,7 @@ function openEditor(g = null) {
     F.cover.value = g.cover || '';
   }
   $('#dlg-add').showModal();
+  return true;
 }
 
 $('#btn-browse').addEventListener('click', async () => {
@@ -638,7 +643,7 @@ function showPickCover(g) {
   const cover = $('#pick-cover');
   cover.textContent = g.cover ? '' : g.name;
   cover.style.background = g.cover
-    ? `url("${g.cover}") center/cover no-repeat, ${gradientFor(g.name)}`
+    ? `${cssUrl(g.cover)} center/cover no-repeat, ${gradientFor(g.name)}`
     : gradientFor(g.name);
   $('#pick-name').textContent = g.name;
 }
@@ -746,7 +751,7 @@ document.addEventListener('drop', (e) => {
   if (!f) return;
   const p = window.launcher.pathForFile ? window.launcher.pathForFile(f) : f.path;
   if (!p) return;
-  openEditor();
+  if (!openEditor()) return;
   F.target.value = p;
   F.name.value = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '').replace(/[-_.]+/g, ' ');
 });
