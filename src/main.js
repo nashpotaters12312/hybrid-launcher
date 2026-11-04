@@ -587,6 +587,7 @@ function registerIpc() {
   ipcMain.handle('settings:set', (_e, patch) => {
     library.settings = { ...(library.settings || {}), ...patch };
     if ('startWithWindows' in patch) applyLoginItem();
+    if ('textSize' in patch) applyTextSize();
     if ('autoUpdate' in patch && app.isPackaged) autoUpdater.autoDownload = patch.autoUpdate !== false;
     if ('showTray' in patch) {
       if (patch.showTray) createTray();
@@ -876,6 +877,14 @@ function prettifyName(file) {
     .trim();
 }
 
+// ---------- Text size ----------
+// Scales the whole interface (text, boxes and buttons together).
+const TEXT_SIZES = { normal: 1, large: 1.15, larger: 1.3, largest: 1.5 };
+function applyTextSize() {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.setZoomFactor(TEXT_SIZES[library.settings?.textSize] || TEXT_SIZES.normal);
+}
+
 // ---------- Window ----------
 function applyLoginItem() {
   if (!app.isPackaged || process.platform !== 'win32') return;
@@ -912,6 +921,7 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.webContents.on('did-finish-load', applyTextSize);
   // "Close to tray": the X button / Alt+F4 hides the window; Quit is in the tray.
   win.on('close', (e) => {
     if (!quitting && tray && library.settings?.closeToTray) {
@@ -960,6 +970,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     app.setAppUserModelId('com.nashpotaters.hybridlauncher');
+    Menu.setApplicationMenu(null);
     library = loadLibrary();
     artFinder = createArtFinder({
       fetch: (url, opts) => net.fetch(url, opts),

@@ -477,3 +477,22 @@ $('#btn-settings').addEventListener('click', async () => {
 });
 api.onUpdateStatus(renderUpdate);
 api.updateStatus().then(renderUpdate);
+
+// ---------- Text size shortcuts ----------
+const TEXT_SIZE_ORDER = ['normal', 'large', 'larger', 'largest'];
+const TEXT_SIZE_LABEL = { normal: 'Normal', large: 'Large', larger: 'Larger', largest: 'Largest' };
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || e.altKey) return;
+  const cur = TEXT_SIZE_ORDER.indexOf(setting('textSize', 'normal'));
+  let next = null;
+  if (e.key === '=' || e.key === '+') next = Math.min(TEXT_SIZE_ORDER.length - 1, cur + 1);
+  else if (e.key === '-' || e.key === '_') next = Math.max(0, cur - 1);
+  else if (e.key === '0') next = 0;
+  if (next == null) return;
+  e.preventDefault();
+  const size = TEXT_SIZE_ORDER[next];
+  changeSetting({ textSize: size });
+  const select = $('#opt-textsize');
+  if (select) select.value = size;
+  toast(`Text size: ${TEXT_SIZE_LABEL[size]}`);
+});

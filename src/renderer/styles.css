@@ -326,13 +326,13 @@ dialog.pick { width: min(600px, 94vw); }
 
 /* ---------- List view ---------- */
 .grid.list { display: flex; flex-direction: column; gap: 2px; }
-.row {
+.grid .row {
   display: grid; grid-template-columns: 44px minmax(0, 1fr) 90px 100px 120px 40px; align-items: center; gap: 14px;
   padding: 6px 10px; border-radius: 8px; cursor: pointer; outline: none; contain-intrinsic-size: auto 58px;
   border: 1px solid transparent; transition: background .15s, border-color .15s;
 }
-.row:hover { background: var(--panel); }
-.row:focus-visible, .row.selected { background: var(--panel); border-color: var(--accent); }
+.grid .row:hover { background: var(--panel); }
+.grid .row:focus-visible, .grid .row.selected { background: var(--panel); border-color: var(--accent); }
 .row-head { cursor: default; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding-top: 0; padding-bottom: 4px; }
 .row-head:hover { background: none; }
 .row-thumb { width: 44px; height: 44px; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -347,7 +347,7 @@ dialog.pick { width: min(600px, 94vw); }
   width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--good); color: #062b1b; cursor: pointer;
   opacity: 0; transition: opacity .15s, transform .15s var(--ease); padding-left: 2px;
 }
-.row:hover .row-play, .row:focus-visible .row-play { opacity: 1; }
+.grid .row:hover .row-play, .grid .row:focus-visible .row-play { opacity: 1; }
 .row-play:hover { transform: scale(1.1); }
 .no-match { grid-column: 1 / -1; }
 
@@ -426,8 +426,8 @@ dialog.ask { width: min(380px, 92vw); }
 
 @media (max-width: 1100px) {
   .panels { grid-template-columns: minmax(0, 1fr); }
-  .row { grid-template-columns: 44px minmax(0, 1fr) 80px 90px 40px; }
-  .row > :nth-child(5) { display: none; }
+  .grid .row { grid-template-columns: 44px minmax(0, 1fr) 80px 90px 40px; }
+  .grid .row > :nth-child(5) { display: none; }
 }
 
 #collections-nav { display: flex; flex-direction: column; gap: 2px; }
@@ -535,3 +535,20 @@ dialog.ask { width: min(380px, 92vw); }
 .play-overlay.is-stop span { background: var(--danger); color: #fff; padding-left: 0; font-size: 18px; }
 .card:has(.is-stop) .play-overlay { opacity: 1; background: rgba(0,0,0,.25); }
 .row-play.is-stop { background: var(--danger); color: #fff; opacity: 1; padding-left: 0; }
+
+/* ---------- Bigger, easier-to-read text boxes ---------- */
+input[type="text"], input[type="search"], input[type="password"], input:not([type]), select, textarea {
+  font-size: 16px;
+  min-height: 44px;
+  padding: 10px 14px;
+  color: var(--text);
+}
+textarea { min-height: 96px; line-height: 1.5; }
+.notes { font-size: 15px; padding: 10px 12px; }
+#search { font-size: 17px; min-height: 46px; }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+/* The labels above boxes in dialogs */
+dialog label, .field { font-size: 14px; }
+dialog label input { color: var(--text); }
+/* Keep the small switch toggles and sliders their normal size. */
+.switch input, input[type="checkbox"], input[type="range"] { min-height: 0; padding: 0; }

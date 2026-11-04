@@ -687,7 +687,7 @@ function fillSettings() {
     const key = input.dataset.setting;
     const def = input.dataset.default === 'true';
     if (input.type === 'checkbox') input.checked = !!setting(key, def);
-    else if (input.tagName === 'SELECT') input.value = setting(key, input.options[0].value);
+    else if (input.tagName === 'SELECT') input.value = setting(key, input.dataset.default || input.options[0].value);
     else input.value = setting(key, input.id === 'opt-cardsize' ? 160 : '');
   }
   $('#opt-sgdb').value = state.settings.sgdbKey || '';
