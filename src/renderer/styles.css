@@ -525,3 +525,6 @@ dialog.ask { width: min(380px, 92vw); }
 .update-btn.ready:hover { background: var(--accent-2); }
 .update-btn:disabled { cursor: default; }
 .setting-row small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+
+/* Toasts stay visible over Arcade games and the details panel. */
+.toast { z-index: 40; }

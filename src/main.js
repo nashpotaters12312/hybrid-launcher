@@ -422,7 +422,9 @@ function registerIpc() {
     if (patch.icon) patch.icon = images.saveIcon(patch.icon, dirs.icons, id);
     if (before && 'target' in patch && patch.target !== before.target) patch.workingDir = '';
     const g = updateGame(id, patch);
-    if (g && !g.cover) queueArt([g.id], true);
+    // Only look for new art when the cover was just cleared (not on every
+    // favorite / note / collection change).
+    if (g && 'cover' in patch && !patch.cover && before?.cover) queueArt([g.id], true);
     return g;
   });
 
@@ -524,6 +526,15 @@ function registerIpc() {
     }
     library.games = [...byId.values()];
     library.settings = { ...(data.settings || {}), ...(library.settings || {}) };
+    // Bring along the backup's collections (plus any its games use) and play history.
+    const names = new Set([...(library.collections || []), ...(Array.isArray(data.collections) ? data.collections : [])]);
+    for (const g of library.games) for (const c of g.collections || []) names.add(c);
+    library.collections = [...names].filter((c) => typeof c === 'string' && c.trim());
+    if (Array.isArray(data.sessions)) {
+      const seen = new Set((library.sessions || []).map((s) => `${s.id}:${s.start}`));
+      const extra = data.sessions.filter((s) => s && s.id && s.start && !seen.has(`${s.id}:${s.start}`));
+      library.sessions = [...(library.sessions || []), ...extra].sort((a, b) => a.start - b.start).slice(-5000);
+    }
     saveLibrary(library);
     notifyChanged();
     return { added, total: data.games.length };

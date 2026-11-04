@@ -311,10 +311,12 @@ const hrs = (min) => (min >= 60 ? `${(min / 60).toFixed(min >= 600 ? 0 : 1)} hrs
 let statsSeq = 0;
 async function renderStats() {
   const seq = ++statsSeq;
-  const sessions = await api.sessions();
+  let sessions = await api.sessions();
   if (seq !== statsSeq || state.filter !== 'stats') return; // a newer render won
 
   const games = state.games.filter((g) => !g.hidden);
+  const known = new Set(state.games.map((g) => g.id));
+  sessions = sessions.filter((s) => known.has(s.id)); // ignore removed games
   const now = Date.now();
   const totalMin = games.reduce((s, g) => s + (g.playtimeMinutes || 0), 0);
   const weekStart = startOfDay(now) - 6 * DAY_MS;

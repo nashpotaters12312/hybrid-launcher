@@ -34,7 +34,7 @@ const ARCADE_GAMES = [
   },
 ];
 
-const arcade = { game: null, cleanup: null };
+const arcade = { game: null, cleanup: null, session: 0 };
 
 function arcadeBest(id) {
   return (state.settings.arcadeBest || {})[id];
@@ -56,7 +56,11 @@ function cssVar(name) {
 }
 
 // ---------- Arcade lobby ----------
+let arcadeSig = '';
 function renderArcade() {
+  const sig = JSON.stringify(state.settings.arcadeBest || {});
+  if (sig === arcadeSig && $('#arcade').childElementCount) return;
+  arcadeSig = sig;
   const icon = {
     match: el('div', { class: 'arc-icon match' }, el('span'), el('span'), el('span'), el('span')),
     orbit: el('div', { class: 'arc-icon orbit' }, el('span', { class: 'core' }), el('span', { class: 'ship' })),
@@ -96,15 +100,21 @@ function openArcadeGame(id) {
   document.body.classList.add('arcade-open');
   const body = $('#arcade-body');
   body.replaceChildren();
+  // Each game run gets its own session; late callbacks from an old run are ignored.
+  const session = ++arcade.session;
+  const live = () => session === arcade.session && !$('#arcade-stage').hidden;
   arcade.cleanup = def.start(body, (text) => {
-    $('#arcade-hud').textContent = text;
-  }, (score, label) => showResult(def, score, label));
+    if (live()) $('#arcade-hud').textContent = text;
+  }, (score, label) => {
+    if (live()) showResult(def, score, label);
+  });
 }
 
 function closeArcadeGame() {
   if (arcade.cleanup) arcade.cleanup();
   arcade.cleanup = null;
   arcade.game = null;
+  arcade.session++;
   $('#arcade-stage').hidden = true;
   document.body.classList.remove('arcade-open');
   if (state.filter === 'arcade') renderArcade();
