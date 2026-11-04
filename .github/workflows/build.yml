@@ -43,22 +43,26 @@ jobs:
             echo "Version $V is already released (or this isn't a push): build only."
           fi
 
-      - name: Tag the release
+      - name: Build installer
+        run: npx electron-builder --win nsis --publish never
+
+      # One step creates the release with every file at once. (Letting
+      # electron-builder publish uploaded files in parallel and could create
+      # two releases for the same version, splitting the files between them.)
+      - name: Publish release
         if: steps.version.outputs.release == 'true'
         shell: bash
-        run: |
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
-
-      - name: Build and publish release
-        if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis --publish always
-
-      - name: Build installer
-        if: steps.version.outputs.release != 'true'
-        run: npx electron-builder --win nsis --publish never
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          test -f dist/latest.yml || { echo "dist/latest.yml is missing"; exit 1; }
+          git log -1 --pretty=%B | grep -v -e '^Co-Authored-By:' -e '^Claude-Session:' > notes.md
+          gh release create "v$V" \
+            "dist/Hybrid-Launcher-Setup-$V.exe" \
+            "dist/Hybrid-Launcher-Setup-$V.exe.blockmap" \
+            dist/latest.yml \
+            --title "Hybrid Launcher $V" --notes-file notes.md --target "$GITHUB_SHA"
 
       - name: Upload installer
         uses: actions/upload-artifact@v7
