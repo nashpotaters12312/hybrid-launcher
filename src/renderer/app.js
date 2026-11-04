@@ -340,12 +340,15 @@ const noMatch = el('p', { class: 'muted no-match' }, 'No games match.');
 function render({ animate = false } = {}) {
   renderCounts();
   const statsMode = state.filter === 'stats';
+  const arcadeMode = state.filter === 'arcade';
   $('#stats').classList.toggle('hidden', !statsMode);
-  $('#grid').classList.toggle('hidden', statsMode);
-  if (statsMode) {
+  $('#arcade').classList.toggle('hidden', !arcadeMode);
+  $('#grid').classList.toggle('hidden', statsMode || arcadeMode);
+  if (statsMode || arcadeMode) {
     $('#continue').classList.add('hidden');
     $('#empty').classList.add('hidden');
-    renderStats();
+    if (statsMode) renderStats();
+    else renderArcade();
     renderDetail();
     return;
   }

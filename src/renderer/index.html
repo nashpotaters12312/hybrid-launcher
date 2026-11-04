@@ -24,6 +24,7 @@
       <button class="nav-item" data-filter="favorites">Favorites <span class="count" id="c-favorites"></span></button>
       <button class="nav-item" data-filter="recent">Recently played</button>
       <button class="nav-item" data-filter="stats">Stats</button>
+      <button class="nav-item" data-filter="arcade">Arcade</button>
       <div class="nav-section">Sources</div>
       <button class="nav-item" data-filter="steam">Steam <span class="count" id="c-steam"></span></button>
       <button class="nav-item" data-filter="epic">Epic Games <span class="count" id="c-epic"></span></button>
@@ -60,6 +61,7 @@
       <section id="continue" class="continue hidden"></section>
       <section id="grid" class="grid"></section>
       <section id="stats" class="stats-view hidden"></section>
+      <section id="arcade" class="arcade-view hidden"></section>
       <div id="empty" class="empty hidden">
         <h2>Your library is empty</h2>
         <p>Scan your PC for Steam and Epic games, or add any game's .exe or shortcut yourself.</p>
@@ -230,9 +232,19 @@
     </form>
   </dialog>
 
+  <div id="arcade-stage" class="arcade-stage" hidden>
+    <div class="arcade-bar">
+      <b id="arcade-title"></b>
+      <span class="arcade-hud" id="arcade-hud"></span>
+      <button class="btn" id="btn-arcade-close" title="Back to the Arcade (Esc)">&#10005;&nbsp; Close</button>
+    </div>
+    <div class="arcade-body" id="arcade-body"></div>
+  </div>
+
   <div id="ctx" class="ctx" role="menu" hidden></div>
   <div id="toast" class="toast"></div>
   <script src="app.js"></script>
   <script src="features.js"></script>
+  <script src="arcade.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 {
   "name": "hybrid-launcher",
   "productName": "Hybrid Launcher",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "One launcher for all your games — Steam, Epic, and anything else on your PC.",
   "main": "src/main.js",
   "author": "nashpotaters12312",

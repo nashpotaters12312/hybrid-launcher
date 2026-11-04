@@ -16,6 +16,7 @@ One launcher for every game on your Windows PC: Steam, Epic Games, and any game'
 - **System tray icon** with your recent games and *Pick for me*; optionally close to the tray.
 - **Desktop shortcuts** for any game that start it through the launcher, so play time is still tracked.
 - **Keyboard friendly:** arrow keys move between games, Enter plays, Space opens details, F favorites, the Menu key opens the right-click menu.
+- **Arcade:** three quick original mini games for when you can't decide: *Cover Match* (a memory game made from your own covers), *Orbit Dodge* (circle the core and dodge debris) and *Quick Draw* (a reaction test). Best scores are saved, and every round ends with a button to pick a real game.
 - **Organize your library** with favorites, a *Continue playing* row, search (Ctrl+F or `/`), sorting, filtering by source, and hiding games.
 - **Launch options** for each game, e.g. `-windowed -novid`.
 - **Settings:** start with Windows (optionally minimized), minimize while playing, automatically add newly installed games, accent color, cover size, show or hide *Continue playing*, animations on or off, and back up or restore your library.
@@ -25,7 +26,7 @@ One launcher for every game on your Windows PC: Steam, Epic Games, and any game'
 
 1. Open the **Actions** tab on GitHub, pick the latest successful **Build Windows installer** run, and download the **Hybrid-Launcher-Setup** artifact.
    - Or push a tag such as `v1.0.0`; the installer is then attached to a GitHub Release.
-2. Unzip it and run `Hybrid-Launcher-Setup-1.5.0.exe`.
+2. Unzip it and run `Hybrid-Launcher-Setup-1.6.0.exe`.
 3. The installer isn't code-signed, so Windows SmartScreen may warn you. Click **More info → Run anyway**.
 
 The installer adds Start Menu and desktop shortcuts and can be uninstalled from *Settings → Apps*.

@@ -436,3 +436,76 @@ dialog.ask { width: min(380px, 92vw); }
 .cover .fallback { text-shadow: 0 1px 3px rgba(0,0,0,.35); }
 .toolbar { flex-wrap: wrap; }
 #search { min-width: 200px; flex: 1 1 200px; }
+
+/* ---------- Arcade ---------- */
+.arcade-view { display: flex; flex-direction: column; gap: 18px; animation: fade-up .22s var(--ease); }
+.arcade-head p { margin: 6px 0 0; }
+.arc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.arc-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
+  transition: transform .2s var(--ease), border-color .2s, box-shadow .2s;
+}
+.arc-card:hover, .arc-card:focus-visible { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 12px 30px var(--shadow); outline: none; }
+.arc-name { font-size: 17px; font-weight: 600; }
+.arc-blurb { color: var(--muted); font-size: 13px; flex: 1; }
+.arc-best { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.arc-play { margin-top: 4px; pointer-events: none; }
+.arcade-foot { display: flex; justify-content: center; padding-top: 6px; }
+
+.arc-icon { width: 100%; height: 110px; border-radius: 10px; background: var(--panel-2); position: relative; overflow: hidden; margin-bottom: 4px; }
+.arc-icon.match { display: grid; grid-template-columns: repeat(4, 34px); gap: 8px; justify-content: center; align-content: center; }
+.arc-icon.match span { height: 46px; border-radius: 6px; background: var(--accent); opacity: .85; }
+.arc-icon.match span:nth-child(2) { background: var(--line-strong); }
+.arc-icon.match span:nth-child(3) { opacity: .5; }
+.arc-icon.orbit .core { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px; border-radius: 50%; background: var(--accent); }
+.arc-icon.orbit::before { content: ""; position: absolute; left: 50%; top: 50%; width: 80px; height: 80px; margin: -40px; border-radius: 50%; border: 2px dashed var(--line-strong); }
+.arc-icon.orbit .ship { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px; border-radius: 3px; background: var(--text); transform: rotate(0deg) translateX(40px); animation: spin 3s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg) translateX(40px); } }
+.arc-icon.draw span { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border-radius: 50%; background: radial-gradient(circle, #fff 0 18%, var(--danger) 19% 44%, #fff 45% 60%, var(--danger) 61%); animation: blink 1.6s ease-in-out infinite; }
+@keyframes blink { 0%, 100% { transform: scale(.8); } 50% { transform: scale(1.05); } }
+
+.arcade-stage {
+  position: fixed; inset: 36px 0 0 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column;
+  animation: fade-in .18s ease;
+}
+.arcade-stage[hidden] { display: none; }
+.arcade-bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.arcade-bar b { font-size: 16px; }
+.arcade-hud { flex: 1; color: var(--muted); font-variant-numeric: tabular-nums; white-space: pre; }
+.arcade-body { flex: 1; position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+
+.arc-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--bg) 70%, transparent); animation: fade-in .2s ease; }
+.arc-result { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px 32px; text-align: center; box-shadow: 0 24px 60px var(--shadow); animation: pop-in .25s var(--ease); display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.arc-result-title { font-size: 22px; font-weight: 700; }
+.arc-result-score { font-size: 18px; font-variant-numeric: tabular-nums; }
+.arc-result-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; justify-content: center; }
+
+/* Cover Match */
+/* Card width follows the window height so all 4 rows always fit. */
+.match-grid { display: grid; grid-template-columns: repeat(4, min(130px, calc((100vh - 200px) / 6.6))); gap: 12px; perspective: 900px; }
+.match-card { aspect-ratio: 2 / 3; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 10px; }
+.match-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.match-inner { position: relative; width: 100%; height: 100%; transition: transform .35s var(--ease); transform-style: preserve-3d; }
+.match-card.flipped .match-inner { transform: rotateY(180deg); }
+.match-face { position: absolute; inset: 0; border-radius: 10px; backface-visibility: hidden; display: flex; align-items: center; justify-content: center; font-size: 28px; color: #fff; text-align: center; padding: 6px; }
+.match-face.back { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: 1px solid var(--line); }
+.match-face.back::after { content: "?"; font-size: 30px; font-weight: 700; color: rgba(255,255,255,.85); }
+.match-face.front { transform: rotateY(180deg); border: 1px solid var(--line); }
+.match-card.done .match-inner { animation: matched .45s var(--ease); }
+.match-card.done .match-face.front { box-shadow: 0 0 0 3px var(--good); }
+@keyframes matched { 50% { transform: rotateY(180deg) scale(1.08); } }
+
+/* Orbit Dodge */
+.orbit-canvas { position: absolute; inset: 0; outline: none; cursor: crosshair; }
+
+/* Quick Draw */
+.draw-field { position: absolute; inset: 0; cursor: pointer; outline: none; display: flex; align-items: center; justify-content: center; user-select: none; }
+.draw-field.early { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.draw-msg { font-size: 22px; font-weight: 600; color: var(--muted); pointer-events: none; text-align: center; padding: 0 20px; }
+.draw-target {
+  position: absolute; width: 64px; height: 64px; border-radius: 50%; border: 0; cursor: pointer; padding: 0;
+  background: radial-gradient(circle, #fff 0 18%, var(--danger) 19% 44%, #fff 45% 60%, var(--danger) 61%);
+  box-shadow: 0 6px 20px var(--shadow); animation: pop-in .08s ease-out;
+}
+.draw-target[hidden] { display: none; }
