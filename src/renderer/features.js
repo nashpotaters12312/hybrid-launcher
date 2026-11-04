@@ -175,7 +175,9 @@ function openMenu(x, y, items, returnFocus = null) {
 
 function gameMenuItems(g) {
   return [
-    { label: g.running ? 'Running' : 'Play', action: () => launch(g.id) },
+    g.running
+      ? { label: 'Stop', danger: true, action: () => stopGame(g) }
+      : { label: 'Play', action: () => launch(g.id) },
     { label: 'Details', action: () => { state.selectedId = null; select(g.id); } },
     '-',
     { label: g.favorite ? 'Remove from favorites' : 'Add to favorites', action: () => toggle(g, 'favorite') },

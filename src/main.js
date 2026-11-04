@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, net, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const scanners = require('./scanners');
 const { createArtFinder } = require('./art');
@@ -15,7 +15,7 @@ const dirs = {
 };
 
 let win;
-const running = new Map(); // gameId -> { startedAt }
+const running = new Map(); // gameId -> { startedAt, pid, folder, watcher }
 
 // ---------- Library storage ----------
 const libraryPath = () => path.join(app.getPath('userData'), 'library.json');
@@ -252,7 +252,9 @@ async function autoScan() {
 
 // ---------- Launching ----------
 function recordSession(id, startedAt) {
-  if (!running.has(id)) return; // already recorded (e.g. on quit)
+  const entry = running.get(id);
+  if (!entry) return; // already recorded (e.g. on quit)
+  clearInterval(entry.watcher);
   running.delete(id);
   const g = library.games.find((x) => x.id === id);
   const minutes = (Date.now() - startedAt) / 60000;
@@ -336,12 +338,127 @@ async function launchGame(id) {
   }
 
   const startedAt = Date.now();
-  running.set(id, { startedAt });
-  child.on('exit', () => recordSession(id, startedAt));
+  const folder = path.dirname(g.target);
+  running.set(id, { startedAt, pid: child.pid, folder: safeGameFolder(folder) });
+  child.on('exit', () => onGameProcessExit(id, startedAt));
   child.unref();
   markLaunched(g);
   notifyChanged();
   return { tracked: true };
+}
+
+// ---------- Watching & stopping games ----------
+// Some games start through a small launcher .exe that opens the real game
+// and exits. When the tracked process exits we look for anything still
+// running from the game's folder, and keep the game "running" until it's gone.
+// Folder-wide matching is only used for folders that clearly belong to one
+// game: never a drive root, the user's own folders or system folders.
+function safeGameFolder(folder) {
+  if (process.platform !== 'win32' || !folder) return null;
+  const f = path.resolve(folder).replace(/[\\/]+$/, '');
+  const norm = (p) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  if (f.length <= 3) return null; // C:\
+  const banned = [
+    app.getPath('home'), app.getPath('desktop'), app.getPath('downloads'), app.getPath('documents'),
+    process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.SystemRoot, process.env.windir,
+    path.dirname(process.execPath),
+  ].filter(Boolean).map(norm);
+  const lf = f.toLowerCase();
+  if (banned.includes(lf)) return null;
+  // Never match the launcher's own install folder or anything inside Windows.
+  if (lf.startsWith(norm(path.dirname(process.execPath)) + path.sep)) return null;
+  if (process.env.SystemRoot && lf.startsWith(norm(process.env.SystemRoot) + path.sep)) return null;
+  return f;
+}
+
+// PIDs of processes whose .exe lives inside `folder` (Windows only).
+function processesInFolder(folder) {
+  if (!folder) return Promise.resolve([]);
+  const script = "$f = $env:HL_FOLDER + '\\'; " +
+    'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and ' +
+    '$_.ExecutablePath.StartsWith($f, [StringComparison]::OrdinalIgnoreCase) } | ' +
+    'ForEach-Object { $_.ProcessId }';
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      env: { ...process.env, HL_FOLDER: folder },
+      windowsHide: true,
+      timeout: 15000,
+    }, (err, out) => {
+      if (err) return resolve([]);
+      resolve(String(out).split(/\s+/).map(Number).filter((n) => n && n !== process.pid));
+    });
+  });
+}
+
+const WATCH_EVERY_MS = 15000;
+
+async function onGameProcessExit(id, startedAt) {
+  const entry = running.get(id);
+  if (!entry) return;
+  entry.pid = null;
+  const still = await processesInFolder(entry.folder);
+  if (!still.length || !running.has(id)) return recordSession(id, startedAt);
+  // The game itself is still open: keep watching its folder.
+  entry.watcher = setInterval(async () => {
+    if (!running.has(id)) return;
+    const left = await processesInFolder(entry.folder);
+    if (!left.length) recordSession(id, startedAt);
+  }, WATCH_EVERY_MS);
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function killPids(pids, force) {
+  if (!pids.length) return Promise.resolve();
+  if (process.platform === 'win32') {
+    const args = [...(force ? ['/F'] : []), '/T', ...pids.flatMap((p) => ['/PID', String(p)])];
+    return new Promise((resolve) => execFile('taskkill', args, { windowsHide: true }, () => resolve()));
+  }
+  for (const pid of pids) {
+    try {
+      process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM'); // the game's whole process group
+    } catch {
+      try {
+        process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  return Promise.resolve();
+}
+
+// Ask the game to close (like clicking its X); force it after a grace period.
+async function stopGame(id) {
+  const entry = running.get(id);
+  const g = library.games.find((x) => x.id === id);
+  if (!entry || !g) return { error: "That game isn't running." };
+  const targets = async () => {
+    const pids = new Set(await processesInFolder(entry.folder));
+    if (entry.pid && isAlive(entry.pid)) pids.add(entry.pid);
+    return [...pids];
+  };
+  let pids = await targets();
+  if (!pids.length) {
+    recordSession(id, entry.startedAt);
+    return { stopped: true };
+  }
+  await killPids(pids, false);
+  for (let i = 0; i < 12; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    pids = (await targets()).filter(isAlive);
+    if (!pids.length) break;
+  }
+  if (pids.length) await killPids(pids, true);
+  recordSession(id, entry.startedAt);
+  return { stopped: true, forced: pids.length > 0 };
 }
 
 // Closing the launcher mid-game: keep the time played so far.
@@ -400,6 +517,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('game:shortcut', (_e, id) => createDesktopShortcut(id));
+  ipcMain.handle('game:stop', (_e, id) => stopGame(id));
 
   ipcMain.handle('update:get', () => updateState);
   ipcMain.handle('update:check', () => {
@@ -728,6 +846,10 @@ function updateTray() {
         }))]
       : [{ label: 'No games played yet', enabled: false }]),
     { type: 'separator' },
+    ...[...running.keys()].map((id) => {
+      const g = library.games.find((x) => x.id === id);
+      return g ? { label: `■ Stop ${g.name}`.slice(0, 60), click: () => stopGame(id) } : null;
+    }).filter(Boolean),
     { label: '🎲 Pick for me', click: () => { showWindow(); win.webContents.send('ui:pick'); } },
     ...(updateState.state === 'ready' ? [{ label: `⬆ Restart to update to ${updateState.version}`, click: installUpdate }] : []),
     { type: 'separator' },

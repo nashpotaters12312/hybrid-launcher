@@ -190,10 +190,12 @@ function gameRow(g) {
   const thumb = el('div', { class: 'row-thumb' });
   thumb.style.background = g.cover ? `${cssUrl(g.cover)} center/cover no-repeat, ${gradientFor(g.name)}` : gradientFor(g.name);
   if (!g.cover && g.icon) thumb.append(el('img', { src: g.icon, alt: '' }));
-  const play = el('button', { class: 'row-play', title: `Play ${g.name}`, 'aria-label': `Play ${g.name}` }, '▶');
+  const verb = g.running ? 'Stop' : 'Play';
+  const play = el('button', { class: 'row-play' + (g.running ? ' is-stop' : ''), title: `${verb} ${g.name}`, 'aria-label': `${verb} ${g.name}` }, g.running ? '■' : '▶');
   play.addEventListener('click', (e) => {
     e.stopPropagation();
-    launch(g.id);
+    if (g.running) stopGame(g);
+    else launch(g.id);
   });
   const row = el('div', { class: 'row card', tabindex: 0, title: g.name },
     thumb,
@@ -256,7 +258,8 @@ function coverNode(g) {
   box.append(el('div', { class: 'badge' }, SOURCE_LABEL[g.source] || 'PC'));
   if (g.running) box.append(el('div', { class: 'badge running' }, 'Playing'));
   if (g.favorite) box.append(el('div', { class: 'fav' }, '★'));
-  box.append(el('div', { class: 'play-overlay' }, el('span', {}, '▶')));
+  box.append(el('div', { class: 'play-overlay' + (g.running ? ' is-stop' : '') },
+    el('span', { title: g.running ? `Stop ${g.name}` : `Play ${g.name}` }, g.running ? '■' : '▶')));
   return box;
 }
 
@@ -269,7 +272,8 @@ function gameCard(g) {
   const cover = coverNode(g);
   cover.querySelector('.play-overlay span').addEventListener('click', (e) => {
     e.stopPropagation();
-    launch(g.id);
+    if (g.running) stopGame(g);
+    else launch(g.id);
   });
   card.append(
     cover,
@@ -414,8 +418,9 @@ function renderDetail() {
   if (!g.cover && g.icon) art.append(el('img', { class: 'icon', src: g.icon, alt: '' }));
   art.append(el('button', { class: 'detail-close', title: 'Close', onclick: () => select(null) }, '✕'));
 
-  const playBtn = el('button', { class: 'btn play', onclick: () => launch(g.id) }, g.running ? 'Running' : '▶  Play');
-  if (g.running) playBtn.disabled = true;
+  const playBtn = g.running
+    ? el('button', { class: 'btn stop', onclick: () => stopGame(g) }, '■  Stop')
+    : el('button', { class: 'btn play', onclick: () => launch(g.id) }, '▶  Play');
 
   panel.replaceChildren(
     art,
@@ -515,6 +520,22 @@ async function launch(id) {
   const res = await api.launch(id);
   if (!res.ok) toast(`Couldn't launch ${g.name}\n${res.error}`, true);
   await refresh();
+}
+
+const stopping = new Set();
+async function stopGame(g) {
+  if (stopping.has(g.id)) return;
+  if (!confirm(`Stop ${g.name}?\n\nThe game is asked to close first, like clicking its X. If it doesn't close within a few seconds it's closed by force, and anything you haven't saved in the game may be lost.`)) return;
+  stopping.add(g.id);
+  toast(`Stopping ${g.name}…`);
+  try {
+    const r = await api.stop(g.id);
+    if (r.error) toast(r.error, true);
+    else toast(r.forced ? `${g.name} didn't respond, so it was closed by force.` : `${g.name} was closed.`);
+  } finally {
+    stopping.delete(g.id);
+    await refresh();
+  }
 }
 
 async function toggle(g, key) {

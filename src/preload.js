@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('launcher', {
   removeGame: (id) => ipcRenderer.invoke('library:remove', id),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   launch: (id) => ipcRenderer.invoke('game:launch', id),
+  stop: (id) => ipcRenderer.invoke('game:stop', id),
   openFolder: (id) => ipcRenderer.invoke('game:openFolder', id),
   pickGame: () => ipcRenderer.invoke('dialog:pickGame'),
   pickImage: () => ipcRenderer.invoke('dialog:pickImage'),
