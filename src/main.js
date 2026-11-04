@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, net, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -103,6 +103,7 @@ function notifyChanged() {
   setTimeout(() => {
     notifyPending = false;
     if (win && !win.isDestroyed()) win.webContents.send('library:changed');
+    updateTray();
   }, 50);
 }
 
@@ -253,8 +254,13 @@ function recordSession(id, startedAt) {
   if (!running.has(id)) return; // already recorded (e.g. on quit)
   running.delete(id);
   const g = library.games.find((x) => x.id === id);
+  const minutes = (Date.now() - startedAt) / 60000;
   if (g) {
-    g.playtimeMinutes = (g.playtimeMinutes || 0) + (Date.now() - startedAt) / 60000;
+    g.playtimeMinutes = (g.playtimeMinutes || 0) + minutes;
+    // Session history powers the Stats page (kept to the most recent 5000).
+    if (minutes >= 0.5) {
+      library.sessions = [...(library.sessions || []), { id, start: startedAt, minutes }].slice(-5000);
+    }
     saveLibrary(library);
   }
   notifyChanged();
@@ -347,7 +353,53 @@ function registerIpc() {
   ipcMain.handle('library:get', () => ({
     games: library.games.map((g) => ({ ...g, running: running.has(g.id) })),
     settings: library.settings || {},
+    collections: library.collections || [],
   }));
+
+  ipcMain.handle('library:sessions', () => library.sessions || []);
+
+  // Collections are names; each game lists the collections it's in.
+  ipcMain.handle('collections:add', (_e, name) => {
+    name = String(name || '').trim().slice(0, 60);
+    if (!name) return { error: 'Give the collection a name.' };
+    library.collections = library.collections || [];
+    if (library.collections.some((c) => c.toLowerCase() === name.toLowerCase())) {
+      return { error: `You already have a collection called "${name}".` };
+    }
+    library.collections.push(name);
+    saveLibrary(library);
+    notifyChanged();
+    return { name };
+  });
+
+  ipcMain.handle('collections:rename', (_e, from, to) => {
+    to = String(to || '').trim().slice(0, 60);
+    const list = library.collections || [];
+    if (!to || !list.includes(from)) return { error: 'Give the collection a name.' };
+    if (to !== from && list.some((c) => c.toLowerCase() === to.toLowerCase())) {
+      return { error: `You already have a collection called "${to}".` };
+    }
+    library.collections = list.map((c) => (c === from ? to : c));
+    for (const g of library.games) {
+      if (g.collections?.includes(from)) g.collections = g.collections.map((c) => (c === from ? to : c));
+    }
+    saveLibrary(library);
+    notifyChanged();
+    return { name: to };
+  });
+
+  ipcMain.handle('collections:delete', (_e, name) => {
+    library.collections = (library.collections || []).filter((c) => c !== name);
+    for (const g of library.games) {
+      if (g.collections?.includes(name)) g.collections = g.collections.filter((c) => c !== name);
+    }
+    saveLibrary(library);
+    notifyChanged();
+    return true;
+  });
+
+  ipcMain.handle('game:shortcut', (_e, id) => createDesktopShortcut(id));
+  ipcMain.handle('app:platform', () => process.platform);
 
   ipcMain.handle('library:add', (_e, game) => addGame(game));
 
@@ -402,6 +454,13 @@ function registerIpc() {
   ipcMain.handle('settings:set', (_e, patch) => {
     library.settings = { ...(library.settings || {}), ...patch };
     if ('startWithWindows' in patch) applyLoginItem();
+    if ('showTray' in patch) {
+      if (patch.showTray) createTray();
+      else if (tray) {
+        tray.destroy();
+        tray = null;
+      }
+    }
     saveLibrary(library);
     return library.settings;
   });
@@ -528,6 +587,78 @@ function registerIpc() {
   });
 }
 
+// ---------- Desktop shortcuts ----------
+// The shortcut opens the launcher with --launch=<id>, so play time is tracked.
+function createDesktopShortcut(id) {
+  const g = library.games.find((x) => x.id === id);
+  if (!g) return { error: 'Game not found.' };
+  if (process.platform !== 'win32') return { error: 'Desktop shortcuts are only available on Windows.' };
+  const safe = g.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim() || 'Game';
+  const file = path.join(app.getPath('desktop'), `${safe}.lnk`);
+  const args = app.isPackaged ? `--launch=${id}` : `"${app.getAppPath()}" --launch=${id}`;
+  const icon = g.type === 'exe' && fs.existsSync(g.target) ? g.target : process.execPath;
+  const ok = shell.writeShortcutLink(file, {
+    target: process.execPath,
+    args,
+    icon,
+    iconIndex: 0,
+    description: `Play ${g.name} with Hybrid Launcher`,
+  });
+  return ok ? { file } : { error: "Couldn't create the shortcut." };
+}
+
+function launchFromArgs(argv) {
+  const arg = argv.find((a) => a.startsWith('--launch='));
+  if (!arg) return false;
+  const id = arg.slice('--launch='.length);
+  launchGame(id).catch((err) => {
+    if (win && !win.isDestroyed()) win.webContents.send('toast:error', err.message);
+  });
+  return true;
+}
+
+// ---------- Tray ----------
+let tray = null;
+let quitting = false;
+
+function showWindow() {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function updateTray() {
+  if (!tray) return;
+  const recent = library.games
+    .filter((g) => g.lastPlayed && !g.hidden)
+    .sort((a, b) => b.lastPlayed - a.lastPlayed)
+    .slice(0, 6);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Hybrid Launcher', click: showWindow },
+    { type: 'separator' },
+    ...(recent.length
+      ? [{ label: 'Recently played', enabled: false }, ...recent.map((g) => ({
+          label: `${running.has(g.id) ? '● ' : ''}${g.name}`.slice(0, 60),
+          click: () => launchGame(g.id).catch(() => {}),
+        }))]
+      : [{ label: 'No games played yet', enabled: false }]),
+    { type: 'separator' },
+    { label: '🎲 Pick for me', click: () => { showWindow(); win.webContents.send('ui:pick'); } },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { tray.destroy(); tray = null; app.quit(); } },
+  ]));
+}
+
+function createTray() {
+  if (tray) return;
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'build', 'icon.png')).resize({ width: 16, height: 16 });
+  tray = new Tray(icon);
+  tray.setToolTip('Hybrid Launcher');
+  tray.on('click', showWindow);
+  updateTray();
+}
+
 function prettifyName(file) {
   return path
     .basename(file, path.extname(file))
@@ -563,7 +694,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     frame: false,
-    backgroundColor: '#0f1117',
+    backgroundColor: library.settings?.theme === 'light' ? '#f4f5f8' : '#0f1117',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -574,9 +705,17 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // "Close to tray": the X button / Alt+F4 hides the window; Quit is in the tray.
+  win.on('close', (e) => {
+    if (!quitting && tray && library.settings?.closeToTray) {
+      e.preventDefault();
+      win.hide();
+    }
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-  const startHidden = process.argv.includes('--hidden') && library.settings?.startMinimized;
+  const fromShortcut = process.argv.some((a) => a.startsWith('--launch='));
+  const startHidden = fromShortcut || (process.argv.includes('--hidden') && library.settings?.startMinimized);
   win.once('ready-to-show', () => {
     if (saved?.maximized && !startHidden) win.maximize();
     if (startHidden) {
@@ -607,11 +746,9 @@ function createWindow() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+  app.on('second-instance', (_e, argv) => {
+    if (launchFromArgs(argv)) return; // desktop shortcut: just start the game
+    showWindow();
   });
 
   app.whenReady().then(() => {
@@ -624,6 +761,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     registerIpc();
     createWindow();
+    if (library.settings?.showTray !== false) createTray();
     // Fill in art for games that don't have any yet.
     applyLoginItem();
     // Housekeeping runs after the window is up so it never delays startup.
@@ -634,6 +772,7 @@ if (!app.requestSingleInstanceLock()) {
           saveLibrary(library);
           notifyChanged();
         }
+        launchFromArgs(process.argv);
         if (library.settings?.autoScan) await autoScan();
         queueArt(library.games.filter(needsArt).map((g) => g.id));
       }, 300);
@@ -645,4 +784,12 @@ if (!app.requestSingleInstanceLock()) {
     flushLibrary();
   });
   app.on('window-all-closed', () => app.quit());
+  // Closing to the tray hides the window instead; 'Quit' in the tray exits.
+  app.on('before-quit', () => {
+    quitting = true;
+    if (tray) {
+      tray.destroy();
+      tray = null;
+    }
+  });
 }

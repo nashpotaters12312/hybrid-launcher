@@ -10,6 +10,8 @@ const state = {
   selectedId: null,
   editingId: null,
   scanResults: [],
+  collections: [],
+  view: 'grid',
 };
 
 // ---------- Helpers ----------
@@ -76,10 +78,12 @@ async function refresh() {
   refreshing = (async () => {
     do {
       refreshAgain = false;
-      const { games, settings } = await api.getLibrary();
+      const { games, settings, collections } = await api.getLibrary();
       state.games = games;
       state.settings = settings;
+      state.collections = collections;
       applyAppearance();
+      renderCollectionsNav();
       render();
     } while (refreshAgain);
   })();
@@ -111,7 +115,16 @@ function applyAppearance() {
   root.setProperty('--accent-2', lighten(accent));
   root.setProperty('--card-min', `${setting('cardSize', 160)}px`);
   document.body.classList.toggle('no-anim', !setting('animations', true));
+  applyTheme();
 }
+
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const pref = setting('theme', 'dark');
+  const theme = pref === 'system' ? (systemDark.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.theme = theme;
+}
+systemDark.addEventListener('change', applyTheme);
 
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 
@@ -122,6 +135,11 @@ function visibleGames() {
     case 'favorites': list = list.filter((g) => g.favorite); break;
     case 'recent': list = list.filter((g) => g.lastPlayed); break;
     case 'steam': case 'epic': case 'custom': list = list.filter((g) => g.source === state.filter); break;
+    default:
+      if (state.filter.startsWith('col:')) {
+        const name = state.filter.slice(4);
+        list = list.filter((g) => g.collections?.includes(name));
+      }
   }
   if (q) list = list.filter((g) => g.name.toLowerCase().includes(q));
 
@@ -154,6 +172,53 @@ function cardFor(g) {
   cardCache.set(g.id, { sig, node });
   return node;
 }
+
+const rowCache = new Map();
+function rowSig(g) {
+  return [cardSig(g), Math.round(g.playtimeMinutes || 0)].join('|');
+}
+function rowFor(g) {
+  const sig = rowSig(g);
+  const hit = rowCache.get(g.id);
+  if (hit && hit.sig === sig) return hit.node;
+  const node = gameRow(g);
+  rowCache.set(g.id, { sig, node });
+  return node;
+}
+
+function gameRow(g) {
+  const thumb = el('div', { class: 'row-thumb' });
+  thumb.style.background = g.cover ? `${cssUrl(g.cover)} center/cover no-repeat, ${gradientFor(g.name)}` : gradientFor(g.name);
+  if (!g.cover && g.icon) thumb.append(el('img', { src: g.icon, alt: '' }));
+  const play = el('button', { class: 'row-play', title: `Play ${g.name}`, 'aria-label': `Play ${g.name}` }, '▶');
+  play.addEventListener('click', (e) => {
+    e.stopPropagation();
+    launch(g.id);
+  });
+  const row = el('div', { class: 'row card', tabindex: 0, title: g.name },
+    thumb,
+    el('div', { class: 'row-name' },
+      el('span', {}, g.name),
+      g.favorite ? el('span', { class: 'row-fav' }, '★') : null,
+      g.running ? el('span', { class: 'badge running inline' }, 'Playing') : null
+    ),
+    el('div', { class: 'row-src' }, SOURCE_LABEL[g.source] || 'PC'),
+    el('div', { class: 'row-num' }, g.playtimeMinutes >= 1 ? formatPlaytime(g.playtimeMinutes) : '—'),
+    el('div', { class: 'row-num' }, g.lastPlayed ? formatAgo(g.lastPlayed) : 'Never'),
+    play
+  );
+  row.dataset.id = g.id;
+  row.addEventListener('click', () => select(g.id));
+  row.addEventListener('dblclick', () => launch(g.id));
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') launch(g.id);
+  });
+  return row;
+}
+
+const listHeader = el('div', { class: 'row row-head', 'aria-hidden': 'true' },
+  el('div'), el('div', {}, 'Name'), el('div', {}, 'Store'), el('div', { class: 'row-num' }, 'Play time'),
+  el('div', { class: 'row-num' }, 'Last played'), el('div'));
 
 // Reorder/insert/remove only what changed instead of rebuilding the grid.
 function reconcile(container, nodes) {
@@ -274,17 +339,41 @@ const noMatch = el('p', { class: 'muted no-match' }, 'No games match.');
 
 function render({ animate = false } = {}) {
   renderCounts();
+  const statsMode = state.filter === 'stats';
+  $('#stats').classList.toggle('hidden', !statsMode);
+  $('#grid').classList.toggle('hidden', statsMode);
+  if (statsMode) {
+    $('#continue').classList.add('hidden');
+    $('#empty').classList.add('hidden');
+    renderStats();
+    renderDetail();
+    return;
+  }
   renderContinue();
   const list = visibleGames();
   const grid = $('#grid');
-  const nodes = list.map(cardFor);
+  const isList = state.view === 'list';
+  grid.classList.toggle('list', isList);
+  const nodes = list.map(isList ? rowFor : cardFor);
   const libraryEmpty = state.games.length === 0;
-  if (!libraryEmpty && list.length === 0) nodes.push(noMatch);
+  if (isList && list.length) nodes.unshift(listHeader);
+  // Keep keyboard focus on the same game when its card gets rebuilt.
+  const focusedId = document.activeElement?.closest?.('#grid .card[data-id]')?.dataset.id;
+  if (!libraryEmpty && list.length === 0) {
+    noMatch.textContent = state.filter.startsWith('col:') && !state.query
+      ? 'This collection is empty. Right-click a game to add it.'
+      : 'No games match.';
+    nodes.push(noMatch);
+  }
   reconcile(grid, nodes);
   for (const node of nodes) node.classList.toggle('selected', node.dataset.id === state.selectedId);
+  if (focusedId && !grid.contains(document.activeElement)) {
+    grid.querySelector(`.card[data-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+  }
   // Drop cached cards for games that were removed.
   const ids = new Set(state.games.map((g) => g.id));
   for (const id of cardCache.keys()) if (!ids.has(id)) cardCache.delete(id);
+  for (const id of rowCache.keys()) if (!ids.has(id)) rowCache.delete(id);
 
   if (animate) {
     grid.classList.remove('swap');
@@ -306,8 +395,13 @@ function renderDetail() {
     return;
   }
   const sig = [g.id, g.name, g.cover, g.icon, g.running, g.favorite, g.hidden, g.target, g.args, g.type,
-    Math.round(g.playtimeMinutes || 0), formatAgo(g.lastPlayed)].join('|');
+    Math.round(g.playtimeMinutes || 0), formatAgo(g.lastPlayed), (g.collections || []).join(','),
+    state.collections.join(',')].join('|');
   if (sig === detailSig) return;
+  // Don't yank the notes box away while it's being typed in.
+  const typing = document.activeElement?.id === 'notes' && panel.dataset.id === g.id;
+  if (typing && sig.split('|')[0] === detailSig.split('|')[0]) return;
+  panel.dataset.id = g.id;
   detailSig = sig;
 
   const art = el('div', { class: 'detail-art' });
@@ -338,8 +432,27 @@ function renderDetail() {
         el('button', { class: 'btn', onclick: () => openEditor(g) }, 'Edit'),
         el('button', { class: 'btn', onclick: () => findArt(g) }, g.cover ? 'New cover' : 'Find cover'),
         g.type !== 'url' ? el('button', { class: 'btn', onclick: () => api.openFolder(g.id) }, 'Open folder') : null,
+        isWindows ? el('button', { class: 'btn', onclick: () => createShortcut(g) }, 'Desktop shortcut') : null,
         el('button', { class: 'btn', onclick: () => toggle(g, 'hidden') }, g.hidden ? 'Unhide' : 'Hide'),
         el('button', { class: 'btn danger', onclick: () => removeGame(g) }, 'Remove')
+      ),
+      el('div', { class: 'detail-section' },
+        el('h4', {}, 'Collections'),
+        el('div', { class: 'chips' },
+          state.collections.map((c) => {
+            const on = g.collections?.includes(c);
+            return el('button', {
+              class: 'chip' + (on ? ' active' : ''),
+              'aria-pressed': on ? 'true' : 'false',
+              onclick: () => toggleCollection(g, c),
+            }, (on ? '✓ ' : '') + c);
+          }),
+          el('button', { class: 'chip add', onclick: () => newCollection(g) }, '+ New')
+        )
+      ),
+      el('div', { class: 'detail-section' },
+        el('h4', {}, 'Notes'),
+        notesBox(g)
       )
     )
   );
@@ -388,7 +501,7 @@ function select(id) {
 }
 
 function savePrefs() {
-  api.setSettings({ lastFilter: state.filter, sort: state.sort });
+  api.setSettings({ lastFilter: state.filter, sort: state.sort, view: state.view });
 }
 
 async function launch(id) {
@@ -513,15 +626,17 @@ $('#form-scan').addEventListener('submit', async (e) => {
 });
 
 // ---------- Wiring ----------
-document.querySelectorAll('.nav-item[data-filter]').forEach((b) =>
-  b.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item[data-filter]').forEach((x) => x.classList.toggle('active', x === b));
-    if (state.filter === b.dataset.filter) return;
-    state.filter = b.dataset.filter;
-    render({ animate: true });
-    savePrefs();
-  })
-);
+function setFilter(filter) {
+  document.querySelectorAll('.nav-item[data-filter]').forEach((x) => x.classList.toggle('active', x.dataset.filter === filter));
+  if (state.filter === filter) return;
+  state.filter = filter;
+  render({ animate: true });
+  savePrefs();
+}
+$('.sidebar').addEventListener('click', (e) => {
+  const b = e.target.closest('.nav-item[data-filter]');
+  if (b) setFilter(b.dataset.filter);
+});
 
 let searchTimer;
 $('#search').addEventListener('input', (e) => {
@@ -548,6 +663,7 @@ function fillSettings() {
     const key = input.dataset.setting;
     const def = input.dataset.default === 'true';
     if (input.type === 'checkbox') input.checked = !!setting(key, def);
+    else if (input.tagName === 'SELECT') input.value = setting(key, input.options[0].value);
     else input.value = setting(key, input.id === 'opt-cardsize' ? 160 : '');
   }
   $('#opt-sgdb').value = state.settings.sgdbKey || '';
@@ -562,6 +678,7 @@ function fillSettings() {
     })
   ));
   $('#row-startmin').classList.toggle('disabled', !setting('startWithWindows', false));
+  $('#row-closetray').classList.toggle('disabled', !setting('showTray', true));
 }
 
 async function changeSetting(patch) {
@@ -574,10 +691,13 @@ async function changeSetting(patch) {
 
 for (const input of settingInputs) {
   const key = input.dataset.setting;
-  if (input.type === 'checkbox') {
+  if (input.tagName === 'SELECT') {
+    input.addEventListener('change', () => changeSetting({ [key]: input.value }));
+  } else if (input.type === 'checkbox') {
     input.addEventListener('change', () => {
       changeSetting({ [key]: input.checked });
       if (key === 'startWithWindows') $('#row-startmin').classList.toggle('disabled', !input.checked);
+      if (key === 'showTray') $('#row-closetray').classList.toggle('disabled', !input.checked);
     });
   } else {
     // Live preview while dragging the slider.
@@ -757,17 +877,23 @@ document.addEventListener('drop', (e) => {
 });
 
 api.onChanged(refresh);
-(async () => {
-  const { games, settings } = await api.getLibrary();
+// Start once every script on the page has loaded (features.js adds helpers).
+window.addEventListener('DOMContentLoaded', async () => {
+  const { games, settings, collections } = await api.getLibrary();
   state.games = games;
   state.settings = settings;
+  state.collections = collections;
   // Restore where you left off.
   state.filter = settings.lastFilter || 'all';
   state.sort = settings.sort || 'name';
+  state.view = settings.view || 'grid';
+  if (state.filter.startsWith('col:') && !state.collections.includes(state.filter.slice(4))) state.filter = 'all';
+  document.querySelectorAll('#view-toggle .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === state.view));
   $('#sort').value = state.sort;
   document.querySelectorAll('.nav-item[data-filter]').forEach((x) =>
     x.classList.toggle('active', x.dataset.filter === state.filter)
   );
   applyAppearance();
+  renderCollectionsNav();
   render(); // first paint straight from the initial load, no second round-trip
-})();
+});

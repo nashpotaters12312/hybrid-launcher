@@ -23,11 +23,16 @@
       <button class="nav-item active" data-filter="all">All games <span class="count" id="c-all"></span></button>
       <button class="nav-item" data-filter="favorites">Favorites <span class="count" id="c-favorites"></span></button>
       <button class="nav-item" data-filter="recent">Recently played</button>
+      <button class="nav-item" data-filter="stats">Stats</button>
       <div class="nav-section">Sources</div>
       <button class="nav-item" data-filter="steam">Steam <span class="count" id="c-steam"></span></button>
       <button class="nav-item" data-filter="epic">Epic Games <span class="count" id="c-epic"></span></button>
       <button class="nav-item" data-filter="custom">My games <span class="count" id="c-custom"></span></button>
       <button class="nav-item" data-filter="hidden">Hidden <span class="count" id="c-hidden"></span></button>
+      <div class="nav-section nav-section-row">Collections
+        <button class="icon-btn" id="btn-new-collection" title="New collection">+</button>
+      </div>
+      <div id="collections-nav"></div>
       <div class="sidebar-foot">
         <div id="art-status" class="art-status hidden"></div>
         <button class="nav-item" id="btn-settings">&#9881;&nbsp; Settings</button>
@@ -43,6 +48,10 @@
           <option value="playtime">Most played</option>
           <option value="added">Recently added</option>
         </select>
+        <div class="seg" id="view-toggle" role="group" aria-label="Layout">
+          <button class="seg-btn active" data-view="grid" title="Cover grid">&#9638;</button>
+          <button class="seg-btn" data-view="list" title="List">&#9776;</button>
+        </div>
         <button class="btn pick-btn" id="btn-pick" title="Pick a random game for me">&#127922; Pick for me</button>
         <button class="btn" id="btn-scan">Scan for games</button>
         <button class="btn primary" id="btn-add">+ Add game</button>
@@ -50,6 +59,7 @@
 
       <section id="continue" class="continue hidden"></section>
       <section id="grid" class="grid"></section>
+      <section id="stats" class="stats-view hidden"></section>
       <div id="empty" class="empty hidden">
         <h2>Your library is empty</h2>
         <p>Scan your PC for Steam and Epic games, or add any game's .exe or shortcut yourself.</p>
@@ -112,11 +122,21 @@
           <label class="switch" id="row-autostart"><span><b>Start with Windows</b><small>Open the launcher when you sign in.</small></span><input type="checkbox" data-setting="startWithWindows" /></label>
           <label class="switch" id="row-startmin"><span><b>Start minimized</b><small>When starting with Windows, open in the taskbar.</small></span><input type="checkbox" data-setting="startMinimized" /></label>
           <label class="switch"><span><b>Minimize when a game starts</b><small>Get the launcher out of the way while you play.</small></span><input type="checkbox" data-setting="minimizeOnLaunch" /></label>
+          <label class="switch"><span><b>Show icon in the system tray</b><small>Quickly launch recent games from the taskbar corner.</small></span><input type="checkbox" data-setting="showTray" data-default="true" /></label>
+          <label class="switch" id="row-closetray"><span><b>Close to tray</b><small>Closing the window keeps the launcher running in the tray.</small></span><input type="checkbox" data-setting="closeToTray" /></label>
           <label class="switch"><span><b>Check for new games on startup</b><small>Automatically add newly installed Steam and Epic games.</small></span><input type="checkbox" data-setting="autoScan" /></label>
         </section>
 
         <section>
           <h3>Appearance</h3>
+          <div class="setting-row">
+            <span><b>Theme</b></span>
+            <select id="opt-theme" data-setting="theme">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+              <option value="system">Match Windows</option>
+            </select>
+          </div>
           <div class="setting-row">
             <span><b>Accent color</b></span>
             <div class="swatches" id="swatches"></div>
@@ -199,7 +219,20 @@
     </form>
   </dialog>
 
+  <dialog id="dlg-ask" class="ask">
+    <form method="dialog" id="form-ask">
+      <h2 id="ask-title"></h2>
+      <input id="ask-input" maxlength="60" autocomplete="off" required />
+      <div class="dlg-actions">
+        <button type="button" class="btn" id="btn-ask-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="btn-ask-ok">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="ctx" class="ctx" role="menu" hidden></div>
   <div id="toast" class="toast"></div>
   <script src="app.js"></script>
+  <script src="features.js"></script>
 </body>
 </html>
