@@ -41,6 +41,22 @@ function notifyChanged() {
   if (win && !win.isDestroyed()) win.webContents.send('library:changed');
 }
 
+// Older versions launched Epic games through the Epic Games Launcher link.
+// Switch any such entries to run the game's .exe directly when it's installed.
+function migrateEpicToDirect() {
+  const legacy = library.games.filter((g) => g.source === 'epic' && g.type === 'url');
+  if (!legacy.length) return;
+  const scanned = new Map(scanners.scanEpic().map((e) => [e.sourceId, e]));
+  let changed = false;
+  for (const g of legacy) {
+    const e = scanned.get(g.sourceId);
+    if (!e || e.type !== 'exe') continue;
+    Object.assign(g, { type: 'exe', target: e.target, args: e.args, workingDir: e.workingDir, epicUrl: e.epicUrl });
+    changed = true;
+  }
+  if (changed) saveLibrary(library);
+}
+
 // ---------- Launching ----------
 function recordSession(id, startedAt) {
   const g = library.games.find((x) => x.id === id);
@@ -107,6 +123,8 @@ function registerIpc() {
       type: game.type || 'exe',
       target: game.target,
       args: game.args || '',
+      workingDir: game.workingDir || '',
+      epicUrl: game.epicUrl || '',
       cover: game.cover || '',
       icon: game.icon || '',
       source: game.source || 'custom',
@@ -247,6 +265,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     app.setAppUserModelId('com.nashpotaters.hybridlauncher');
     library = loadLibrary();
+    migrateEpicToDirect();
     registerIpc();
     createWindow();
   });

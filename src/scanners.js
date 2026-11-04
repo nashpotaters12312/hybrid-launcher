@@ -141,16 +141,24 @@ function scanEpic() {
       if (!m || !m.AppName || !m.DisplayName) continue;
       if (Array.isArray(m.AppCategories) && !m.AppCategories.includes('games')) continue;
       const id = `${m.CatalogNamespace}:${m.CatalogItemId}:${m.AppName}`;
+      const epicUrl = `com.epicgames.launcher://apps/${encodeURIComponent(id)}?action=launch&silent=true`;
+      const exe = m.InstallLocation && m.LaunchExecutable
+        ? path.join(m.InstallLocation, m.LaunchExecutable)
+        : '';
+      // Run the game's own .exe so the Epic Games Launcher isn't opened.
+      // Fall back to the Epic link only if we can't find the executable.
+      const direct = exe && fs.existsSync(exe);
       games.push({
         name: m.DisplayName,
-        type: 'url',
-        target: `com.epicgames.launcher://apps/${encodeURIComponent(id)}?action=launch&silent=true`,
+        type: direct ? 'exe' : 'url',
+        target: direct ? exe : epicUrl,
+        args: direct ? (m.LaunchCommand || '').trim() : '',
+        workingDir: direct ? path.dirname(exe) : '',
+        epicUrl,
         cover: '',
         source: 'epic',
         sourceId: m.AppName,
-        iconFrom: m.InstallLocation && m.LaunchExecutable
-          ? path.join(m.InstallLocation, m.LaunchExecutable)
-          : '',
+        iconFrom: exe,
       });
     } catch {
       /* ignore broken manifests */
